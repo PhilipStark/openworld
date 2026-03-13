@@ -1,0 +1,11 @@
+{
+  "name": "openworld",
+  "private": true,
+  "scripts": {
+    "server": "cd server && node src/index.js",
+    "server:dev": "cd server && node --watch src/index.js",
+    "test": "cd server && npx vitest run",
+    "test:watch": "cd server && npx vitest",
+    "start": "npm run server:dev"
+  }
+}
