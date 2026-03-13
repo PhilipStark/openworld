@@ -77,7 +77,7 @@ startGameLoop(db, io, {
 }, TICK_INTERVAL);
 
 const PORT = process.env.PORT || 3001;
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`OpenWorld server running on port ${PORT}`);
   console.log(`Game loop: ${TICK_INTERVAL}ms ticks`);
 });

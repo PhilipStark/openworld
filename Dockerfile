@@ -8,7 +8,7 @@ RUN cd server && npm ci --production
 
 # Install client deps and build
 COPY client/package*.json ./client/
-RUN cd client && npm ci
+RUN cd client && npm ci --legacy-peer-deps
 COPY client/ ./client/
 RUN cd client && npm run build
 
