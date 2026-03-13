@@ -5,6 +5,7 @@ WORKDIR /app
 # Install server deps
 COPY server/package*.json ./server/
 RUN cd server && npm ci --production
+COPY server/ ./server/
 
 # Install client deps and build
 COPY client/package*.json ./client/
