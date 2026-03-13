@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { registerAgent, connectAgent, disconnectAgent, buildPerception, getAgent } from './agent.js';
 import { dispatch } from './actions.js';
 import { getWorldSize } from './world.js';
-import { authMiddleware, rateLimiter } from './auth.js';
+import { authMiddleware, rateLimiter, ipRateLimiter } from './auth.js';
 import { getMessagesForAgent } from './chat.js';
 import { getTradesForAgent } from './economy.js';
 
@@ -23,12 +23,19 @@ export function createApiRouter(db) {
   const router = Router();
   const auth = authMiddleware(db);
   const limit = rateLimiter();
+  const registerLimit = ipRateLimiter({ windowMs: 60000, maxRequests: 5 });
 
-  router.post('/register', (req, res) => {
+  const MAX_AGENTS = parseInt(process.env.MAX_AGENTS) || 1000;
+
+  router.post('/register', registerLimit, (req, res) => {
     try {
       const { name } = req.body;
       if (!name || name.length < 1 || name.length > 50) {
         return res.status(400).json({ ok: false, error: 'invalid_name', message: 'Name must be 1-50 chars' });
+      }
+      const agentCount = db.prepare("SELECT COUNT(*) as cnt FROM agents").get().cnt;
+      if (agentCount >= MAX_AGENTS) {
+        return res.status(503).json({ ok: false, error: 'world_full', message: 'World has reached max agent capacity' });
       }
       const result = registerAgent(db, name);
       res.status(201).json(result);

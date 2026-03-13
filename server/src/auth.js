@@ -17,6 +17,39 @@ export function authMiddleware(db) {
 }
 
 const rateLimitMap = new Map();
+const ipRateLimitMap = new Map();
+
+export function ipRateLimiter({ windowMs = 60000, maxRequests = 5 } = {}) {
+  return (req, res, next) => {
+    const ip = req.ip || req.connection.remoteAddress || 'unknown';
+    const now = Date.now();
+    const entry = ipRateLimitMap.get(ip);
+
+    if (!entry || now - entry.start > windowMs) {
+      ipRateLimitMap.set(ip, { start: now, count: 1 });
+      return next();
+    }
+
+    entry.count++;
+    if (entry.count > maxRequests) {
+      const retryAfter = Math.ceil((entry.start + windowMs - now) / 1000);
+      return res.status(429).json({
+        ok: false,
+        error: 'rate_limited',
+        message: `Too many requests. Try again in ${retryAfter}s`,
+      });
+    }
+    next();
+  };
+}
+
+// Clean up stale entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of ipRateLimitMap) {
+    if (now - entry.start > 300000) ipRateLimitMap.delete(ip);
+  }
+}, 300000);
 
 export function rateLimiter(tickInterval = 1500) {
   return (req, res, next) => {
