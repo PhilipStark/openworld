@@ -1,22 +1,74 @@
-const TILE_SIZE = 32;
+/**
+ * TileRenderer — Sprite-based tile rendering with pixel art textures
+ * Replaces solid colored rectangles with procedural Tibia-style sprites
+ */
+import { Container, Sprite } from 'pixi.js';
+import { getTileTexture, TILE_SIZE } from './SpriteGenerator.js';
 
-const TILE_COLORS = {
-  grass: 0x7ec850,
-  water: 0x4a90d9,
-  rock: 0x8b8b8b,
-  sand: 0xe8d44d,
-  forest: 0x2d8a4e,
-  mountain: 0x6b5b3e,
-  fertile_soil: 0xa0522d,
-};
+export { TILE_SIZE };
 
-export function drawTiles(graphics, tiles) {
-  graphics.clear();
+// Water animation frame counter
+let waterFrame = 0;
+let waterTimer = 0;
+const WATER_ANIM_INTERVAL = 800; // ms between water animation frames
+
+/**
+ * Create a tile container with sprite-based tiles
+ * Returns a Container (not Graphics) for proper sprite rendering
+ */
+export function createTileLayer(tiles) {
+  const container = new Container();
+  container.label = 'tileLayer';
+
   for (const tile of tiles) {
-    const color = TILE_COLORS[tile.type] || 0x333333;
-    graphics.rect(tile.x * TILE_SIZE, tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-    graphics.fill(color);
+    const texture = getTileTexture(tile.type, tile.x, tile.y, 0);
+    const sprite = new Sprite(texture);
+    sprite.x = tile.x * TILE_SIZE;
+    sprite.y = tile.y * TILE_SIZE;
+    sprite.width = TILE_SIZE;
+    sprite.height = TILE_SIZE;
+    sprite.tileType = tile.type;
+    sprite.tileX = tile.x;
+    sprite.tileY = tile.y;
+    container.addChild(sprite);
+  }
+
+  return container;
+}
+
+/**
+ * Update water tile animations
+ * Call this from the render loop with delta time
+ */
+export function updateWaterAnimation(tileContainer, dt) {
+  waterTimer += dt;
+  if (waterTimer < WATER_ANIM_INTERVAL) return;
+  waterTimer = 0;
+  waterFrame = (waterFrame + 1) % 4;
+
+  if (!tileContainer) return;
+  for (const child of tileContainer.children) {
+    if (child.tileType === 'water') {
+      child.texture = getTileTexture('water', child.tileX, child.tileY, waterFrame);
+    }
   }
 }
 
-export { TILE_SIZE };
+// Legacy compat — drawTiles using sprites
+export function drawTiles(container, tiles) {
+  // Remove old children
+  container.removeChildren();
+
+  for (const tile of tiles) {
+    const texture = getTileTexture(tile.type, tile.x, tile.y, 0);
+    const sprite = new Sprite(texture);
+    sprite.x = tile.x * TILE_SIZE;
+    sprite.y = tile.y * TILE_SIZE;
+    sprite.width = TILE_SIZE;
+    sprite.height = TILE_SIZE;
+    sprite.tileType = tile.type;
+    sprite.tileX = tile.x;
+    sprite.tileY = tile.y;
+    container.addChild(sprite);
+  }
+}
