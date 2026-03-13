@@ -2,6 +2,15 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { createDb } from './db.js';
+import { generateWorld, getWorldSize } from './world.js';
+import { createApiRouter, setTick } from './api.js';
+import { setupWebSocket, broadcastTick } from './ws.js';
+import { startGameLoop } from './gameLoop.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const httpServer = createServer(app);
@@ -10,11 +19,51 @@ const io = new Server(httpServer, { cors: { origin: '*' } });
 app.use(cors());
 app.use(express.json());
 
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+// Database
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'openworld.db');
+const db = createDb(DB_PATH);
+
+// Generate world if empty
+const worldSize = getWorldSize(db);
+if (worldSize.width === 0) {
+  const size = parseInt(process.env.WORLD_SIZE) || 50;
+  console.log(`Generating ${size}x${size} world...`);
+  generateWorld(db, size, size);
+  console.log('World generated!');
+} else {
+  console.log(`Loaded existing ${worldSize.width}x${worldSize.height} world`);
+}
+
+// API routes
+app.use('/api', createApiRouter(db));
+
+// Health check
+app.get('/health', (req, res) => res.json({ status: 'ok', tick: 0 }));
+
+// Serve client static files in production
+const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
+app.use(express.static(clientDist));
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) return next();
+  res.sendFile(path.join(clientDist, 'index.html'), (err) => {
+    if (err) next();
+  });
+});
+
+// WebSocket
+setupWebSocket(io, db);
+
+// Game loop
+const TICK_INTERVAL = parseInt(process.env.TICK_INTERVAL) || 1500;
+startGameLoop(db, io, {
+  setTickFn: setTick,
+  broadcastTickFn: broadcastTick,
+}, TICK_INTERVAL);
 
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log(`OpenWorld server running on port ${PORT}`);
+  console.log(`Game loop: ${TICK_INTERVAL}ms ticks`);
 });
 
 export { app, io, httpServer };
