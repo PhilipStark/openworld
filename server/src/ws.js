@@ -35,8 +35,15 @@ export function broadcastTick(io, db, tick) {
     "SELECT id, name, x, y, hp, energy, status, bio, weapon, shield, tool, busy_action, busy_ticks_remaining FROM agents WHERE status != 'dead'"
   ).all();
 
+  // Batch load all inventories in a single query instead of N+1
+  const allItems = db.prepare("SELECT agent_id, item, qty FROM items").all();
+  const inventoryMap = {};
+  for (const row of allItems) {
+    if (!inventoryMap[row.agent_id]) inventoryMap[row.agent_id] = [];
+    inventoryMap[row.agent_id].push({ item: row.item, qty: row.qty });
+  }
   for (const agent of agents) {
-    agent.inventory = db.prepare("SELECT item, qty FROM items WHERE agent_id = ?").all(agent.id);
+    agent.inventory = inventoryMap[agent.id] || [];
   }
 
   const { width, height } = getWorldSize(db);

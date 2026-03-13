@@ -63,10 +63,16 @@ export function handleSteal(db, agent, params, tick) {
   const stolen = targetItems[Math.floor(Math.random() * targetItems.length)];
   const stolenQty = 1;
 
+  // Check inventory capacity before stealing
+  const existing = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, stolen.item);
+  if (!existing) {
+    const invCount = db.prepare("SELECT COUNT(*) as cnt FROM items WHERE agent_id = ?").get(agent.id).cnt;
+    if (invCount >= 20) return { ok: true, tick, result: { stolen: false, inventory_full: true } };
+  }
+
   db.prepare("UPDATE items SET qty = qty - ? WHERE agent_id = ? AND item = ?").run(stolenQty, targetId, stolen.item);
   db.prepare("DELETE FROM items WHERE agent_id = ? AND item = ? AND qty <= 0").run(targetId, stolen.item);
 
-  const existing = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, stolen.item);
   if (existing) {
     db.prepare("UPDATE items SET qty = qty + ? WHERE agent_id = ? AND item = ?").run(stolenQty, agent.id, stolen.item);
   } else {
@@ -93,15 +99,19 @@ export function handleLoot(db, agent, params, tick) {
   }
 
   const items = db.prepare("SELECT item, qty FROM items WHERE agent_id = ?").all(targetId);
-  for (const item of items) {
-    const existing = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, item.item);
-    if (existing) {
-      db.prepare("UPDATE items SET qty = qty + ? WHERE agent_id = ? AND item = ?").run(item.qty, agent.id, item.item);
-    } else {
-      db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, ?, ?)").run(agent.id, item.item, item.qty);
+
+  const executeLoot = db.transaction(() => {
+    for (const item of items) {
+      const existing = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, item.item);
+      if (existing) {
+        db.prepare("UPDATE items SET qty = qty + ? WHERE agent_id = ? AND item = ?").run(item.qty, agent.id, item.item);
+      } else {
+        db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, ?, ?)").run(agent.id, item.item, item.qty);
+      }
     }
-  }
-  db.prepare("DELETE FROM items WHERE agent_id = ?").run(targetId);
+    db.prepare("DELETE FROM items WHERE agent_id = ?").run(targetId);
+  });
+  executeLoot();
 
   return { ok: true, tick, result: { looted: items } };
 }

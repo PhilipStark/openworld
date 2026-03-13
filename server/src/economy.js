@@ -26,6 +26,8 @@ const BUILD_TICKS_MAP = {
   bridge: 10, wall: 5, door: 5,
 };
 
+const VALID_EQUIP_SLOTS = new Set(['weapon', 'shield', 'tool']);
+
 const DIRECTION_OFFSETS = {
   north: { dx: 0, dy: -1 }, south: { dx: 0, dy: 1 },
   east:  { dx: 1, dy: 0 },  west:  { dx: -1, dy: 0 },
@@ -79,6 +81,7 @@ export function handleCraft(db, agent, params, tick) {
   addItems(db, agent.id, recipe.output);
 
   if (recipe.equip) {
+    if (!VALID_EQUIP_SLOTS.has(recipe.equip)) throw new Error(`Invalid equip slot: ${recipe.equip}`);
     const equipItem = Object.keys(recipe.output)[0];
     db.prepare(`UPDATE agents SET ${recipe.equip} = ? WHERE id = ?`).run(equipItem, agent.id);
   }
@@ -126,13 +129,16 @@ export function handleTradePropose(db, agent, params, tick) {
     return { ok: false, error: 'not_enough_items', message: 'Not enough items to offer' };
   }
 
-  removeItems(db, agent.id, offerMap);
-
   const tradeId = uuid().slice(0, 8);
   const expiresTick = tick + 5;
-  db.prepare(
-    "INSERT INTO trades (id, from_id, to_id, offer, request, expires_tick) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(tradeId, agent.id, target.id, JSON.stringify(offer), JSON.stringify(requested), expiresTick);
+
+  const executeTrade = db.transaction(() => {
+    removeItems(db, agent.id, offerMap);
+    db.prepare(
+      "INSERT INTO trades (id, from_id, to_id, offer, request, expires_tick) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(tradeId, agent.id, target.id, JSON.stringify(offer), JSON.stringify(requested), expiresTick);
+  });
+  executeTrade();
 
   return { ok: true, tick, result: { trade_id: tradeId, expires_tick: expiresTick } };
 }

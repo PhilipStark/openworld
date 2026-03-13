@@ -76,8 +76,11 @@ export function createDb(path = './openworld.db') {
     );
 
     CREATE INDEX IF NOT EXISTS idx_events_tick ON events(tick);
+    CREATE INDEX IF NOT EXISTS idx_events_agent_type ON events(agent_id, type);
     CREATE INDEX IF NOT EXISTS idx_structures_pos ON structures(x, y);
     CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
+    CREATE INDEX IF NOT EXISTS idx_trades_status_expires ON trades(status, expires_tick);
+    CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
   `);
 
   return db;
