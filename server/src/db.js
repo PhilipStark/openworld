@@ -83,5 +83,12 @@ export function createDb(path = './openworld.db') {
     CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
   `);
 
+  // Migration: add busy_data column for reliable action completion
+  try {
+    db.exec("ALTER TABLE agents ADD COLUMN busy_data TEXT");
+  } catch (e) {
+    // Column already exists — ignore
+  }
+
   return db;
 }

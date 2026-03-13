@@ -1,10 +1,8 @@
-import { getAgent } from './agent.js';
-
 export function handleAttack(db, agent, params, tick) {
   const targetId = params?.agent_id;
   if (!targetId) return { ok: false, error: 'invalid_params', message: 'Need agent_id' };
 
-  const target = getAgent(db, targetId);
+  const target = db.prepare("SELECT * FROM agents WHERE id = ? OR name = ?").get(targetId, targetId);
   if (!target) return { ok: false, error: 'target_not_found', message: 'Target not found' };
   if (target.status === 'dead') return { ok: false, error: 'target_dead', message: 'Cannot attack dead agent' };
 
@@ -40,7 +38,7 @@ export function handleSteal(db, agent, params, tick) {
   const targetId = params?.agent_id;
   if (!targetId) return { ok: false, error: 'invalid_params', message: 'Need agent_id' };
 
-  const target = getAgent(db, targetId);
+  const target = db.prepare("SELECT * FROM agents WHERE id = ? OR name = ?").get(targetId, targetId);
   if (!target) return { ok: false, error: 'target_not_found', message: 'Target not found' };
 
   const dist = Math.abs(agent.x - target.x) + Math.abs(agent.y - target.y);
@@ -90,7 +88,7 @@ export function handleLoot(db, agent, params, tick) {
   const targetId = params?.agent_id;
   if (!targetId) return { ok: false, error: 'invalid_params', message: 'Need agent_id' };
 
-  const target = getAgent(db, targetId);
+  const target = db.prepare("SELECT * FROM agents WHERE id = ? OR name = ?").get(targetId, targetId);
   if (!target) return { ok: false, error: 'target_not_found', message: 'Target not found' };
   if (target.status !== 'dead') return { ok: false, error: 'target_alive', message: 'Can only loot dead agents' };
 
@@ -98,22 +96,37 @@ export function handleLoot(db, agent, params, tick) {
     return { ok: false, error: 'not_same_tile', message: 'Must be on same tile to loot' };
   }
 
-  const items = db.prepare("SELECT item, qty FROM items WHERE agent_id = ?").all(targetId);
+  const items = db.prepare("SELECT item, qty FROM items WHERE agent_id = ?").all(target.id);
+  if (items.length === 0) return { ok: true, tick, result: { looted: [] } };
+
+  // Check inventory capacity before looting
+  const currentSlots = db.prepare("SELECT COUNT(*) as cnt FROM items WHERE agent_id = ?").get(agent.id).cnt;
+  const MAX_SLOTS = 20;
 
   const executeLoot = db.transaction(() => {
+    const looted = [];
+    let usedSlots = currentSlots;
+
     for (const item of items) {
       const existing = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, item.item);
       if (existing) {
+        // Existing slot — just add quantity
         db.prepare("UPDATE items SET qty = qty + ? WHERE agent_id = ? AND item = ?").run(item.qty, agent.id, item.item);
-      } else {
+        looted.push(item);
+      } else if (usedSlots < MAX_SLOTS) {
+        // New slot — check capacity
         db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, ?, ?)").run(agent.id, item.item, item.qty);
+        usedSlots++;
+        looted.push(item);
       }
+      // else: skip item, inventory full for new slots
     }
-    db.prepare("DELETE FROM items WHERE agent_id = ?").run(targetId);
+    db.prepare("DELETE FROM items WHERE agent_id = ?").run(target.id);
+    return looted;
   });
-  executeLoot();
+  const looted = executeLoot();
 
-  return { ok: true, tick, result: { looted: items } };
+  return { ok: true, tick, result: { looted } };
 }
 
 function killAgent(db, agentId, tick) {

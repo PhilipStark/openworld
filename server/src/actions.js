@@ -154,10 +154,11 @@ function handleGather(db, agent, params, tick) {
   let gatherTicks = 3;
   if (tile.resource === 'wood' && agent.tool === 'axe') gatherTicks = 2;
 
-  db.prepare("UPDATE agents SET busy_action = 'gather', busy_ticks_remaining = ? WHERE id = ?").run(gatherTicks, agent.id);
+  const busyData = JSON.stringify({ resource: tile.resource, tileX: tile.x, tileY: tile.y });
+  db.prepare("UPDATE agents SET busy_action = 'gather', busy_ticks_remaining = ?, busy_data = ? WHERE id = ?").run(gatherTicks, busyData, agent.id);
 
   db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'gather_start', ?, ?)").run(
-    tick, agent.id, JSON.stringify({ resource: tile.resource, tileX: tile.x, tileY: tile.y })
+    tick, agent.id, busyData
   );
 
   return { ok: true, tick, result: { gathering: tile.resource, ticks: gatherTicks } };

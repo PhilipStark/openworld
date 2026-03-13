@@ -59,6 +59,11 @@ export function createApiRouter(db) {
   });
 
   router.get('/look', auth, (req, res) => {
+    const agent = getAgent(db, req.agent.id);
+    if (!agent) return res.status(404).json({ ok: false, error: 'agent_not_found' });
+    if (agent.status !== 'awake') {
+      return res.status(400).json({ ok: false, error: 'agent_not_awake', message: `Agent is ${agent.status}` });
+    }
     const perception = enrichedPerception(db, req.agent.id, 5, currentTick);
     if (!perception) return res.status(404).json({ ok: false, error: 'agent_not_found' });
     res.json(perception);
@@ -71,6 +76,11 @@ export function createApiRouter(db) {
   });
 
   router.get('/status', auth, (req, res) => {
+    const agent = getAgent(db, req.agent.id);
+    if (!agent) return res.status(404).json({ ok: false, error: 'agent_not_found' });
+    if (agent.status === 'dead') {
+      return res.json({ status: 'dead', message: 'Agent is dead. Use POST /api/connect to respawn.' });
+    }
     const perception = enrichedPerception(db, req.agent.id, 0, currentTick);
     res.json(perception);
   });
@@ -89,6 +99,25 @@ export function createApiRouter(db) {
       "SELECT * FROM events WHERE tick > ? AND tick <= ? ORDER BY tick ASC LIMIT 1000"
     ).all(from, to);
     res.json({ events: events.map(e => ({ ...e, data: JSON.parse(e.data || '{}') })) });
+  });
+
+  // Leaderboard — public, no auth required
+  router.get('/leaderboard', (req, res) => {
+    const agents = db.prepare(`
+      SELECT a.id, a.name, a.status, a.hp, a.energy, a.bio, a.created_at,
+        (SELECT COUNT(*) FROM items WHERE agent_id = a.id) as item_count,
+        (SELECT COALESCE(SUM(qty), 0) FROM items WHERE agent_id = a.id) as total_items,
+        (SELECT COUNT(*) FROM events WHERE agent_id = a.id AND type = 'attack') as attacks,
+        (SELECT COUNT(*) FROM events WHERE agent_id = a.id AND type = 'death') as deaths,
+        (SELECT COUNT(*) FROM structures WHERE owner_id = a.id) as structures_built,
+        (SELECT COUNT(*) FROM events WHERE agent_id = a.id AND type = 'speak') as messages_sent
+      FROM agents a
+      ORDER BY
+        CASE a.status WHEN 'awake' THEN 0 WHEN 'exhausted' THEN 1 WHEN 'sleeping' THEN 2 ELSE 3 END,
+        a.hp DESC
+      LIMIT 50
+    `).all();
+    res.json({ leaderboard: agents, tick: currentTick });
   });
 
   return router;

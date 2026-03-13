@@ -6,4 +6,11 @@
 *.db-wal
 *.db-journal
 .env
+.env.*
 fly.toml
+.DS_Store
+.vscode
+.idea
+coverage
+.nyc_output
+server/tests

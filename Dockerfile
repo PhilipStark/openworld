@@ -21,10 +21,14 @@ COPY --from=builder /app/client/dist/ ./client/dist/
 COPY skill/ ./skill/
 COPY package.json ./
 
-RUN mkdir -p /app/data
+RUN mkdir -p /data
 
 ENV NODE_ENV=production
 ENV PORT=3001
+ENV DB_PATH=/data/openworld.db
 EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -qO- http://localhost:3001/health || exit 1
 
 CMD ["node", "server/src/index.js"]

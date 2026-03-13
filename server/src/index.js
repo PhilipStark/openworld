@@ -6,7 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createDb } from './db.js';
 import { generateWorld, getWorldSize } from './world.js';
-import { createApiRouter, setTick } from './api.js';
+import { createApiRouter, setTick, getTick } from './api.js';
 import { setupWebSocket, broadcastTick } from './ws.js';
 import { startGameLoop } from './gameLoop.js';
 
@@ -53,8 +53,15 @@ if (worldSize.width === 0) {
 // API routes
 app.use('/api', createApiRouter(db));
 
-// Health check
-app.get('/health', (req, res) => res.json({ status: 'ok', tick: 0 }));
+// Health check (real data)
+const startTime = Date.now();
+app.get('/health', (req, res) => {
+  const tick = getTick();
+  const agentCount = db.prepare("SELECT COUNT(*) as cnt FROM agents WHERE status != 'dead'").get().cnt;
+  const awakeCount = db.prepare("SELECT COUNT(*) as cnt FROM agents WHERE status = 'awake'").get().cnt;
+  const uptime = Math.floor((Date.now() - startTime) / 1000);
+  res.json({ status: 'ok', tick, agents: agentCount, awake: awakeCount, uptime_seconds: uptime });
+});
 
 // Serve client static files in production
 const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');

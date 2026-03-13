@@ -37,9 +37,9 @@ export function processTick(db, tick) {
     db.prepare("UPDATE agents SET status = 'exhausted', busy_action = 'rest', busy_ticks_remaining = 5 WHERE id = ?").run(agent.id);
   }
 
-  // 4. Day boundary: hunger + auto-eat
+  // 4. Day boundary: hunger + auto-eat (only for awake and exhausted, not sleeping)
   if (tick % DAY_LENGTH === 0 && tick > 0) {
-    const alive = db.prepare("SELECT * FROM agents WHERE status IN ('awake', 'sleeping', 'exhausted')").all();
+    const alive = db.prepare("SELECT * FROM agents WHERE status IN ('awake', 'exhausted')").all();
     for (const agent of alive) {
       autoEat(db, agent, tick);
     }
@@ -61,16 +61,29 @@ export function processTick(db, tick) {
 }
 
 function completeBusyAction(db, agent, tick) {
+  // Use busy_data stored on agent (reliable) with fallback to events (legacy)
+  let busyDataParsed = null;
+  if (agent.busy_data) {
+    try { busyDataParsed = JSON.parse(agent.busy_data); } catch (e) { /* ignore */ }
+  }
+
   if (agent.busy_action === 'gather') {
-    const gatherEvent = db.prepare(
-      "SELECT data FROM events WHERE type = 'gather_start' AND agent_id = ? ORDER BY id DESC LIMIT 1"
-    ).get(agent.id);
     let tileX = agent.x, tileY = agent.y;
     let resource = null;
-    if (gatherEvent) {
-      const data = JSON.parse(gatherEvent.data);
-      tileX = data.tileX; tileY = data.tileY; resource = data.resource;
+
+    if (busyDataParsed) {
+      tileX = busyDataParsed.tileX; tileY = busyDataParsed.tileY; resource = busyDataParsed.resource;
+    } else {
+      // Legacy fallback: query events table
+      const gatherEvent = db.prepare(
+        "SELECT data FROM events WHERE type = 'gather_start' AND agent_id = ? ORDER BY id DESC LIMIT 1"
+      ).get(agent.id);
+      if (gatherEvent) {
+        const data = JSON.parse(gatherEvent.data);
+        tileX = data.tileX; tileY = data.tileY; resource = data.resource;
+      }
     }
+
     const tile = getTile(db, tileX, tileY);
     const res = resource || (tile && tile.resource);
     if (tile && res && tile.resource_qty > 0) {
@@ -78,18 +91,31 @@ function completeBusyAction(db, agent, tick) {
       if (existing) {
         db.prepare("UPDATE items SET qty = qty + 1 WHERE agent_id = ? AND item = ?").run(agent.id, res);
       } else {
-        db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, ?, 1)").run(agent.id, res);
+        // Check inventory capacity before adding new slot
+        const invCount = db.prepare("SELECT COUNT(*) as cnt FROM items WHERE agent_id = ?").get(agent.id).cnt;
+        if (invCount < 20) {
+          db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, ?, 1)").run(agent.id, res);
+        }
       }
       db.prepare("UPDATE tiles SET resource_qty = resource_qty - 1 WHERE x = ? AND y = ?").run(tileX, tileY);
     }
   }
 
   if (agent.busy_action === 'build') {
-    const buildEvent = db.prepare(
-      "SELECT data FROM events WHERE type = 'build_start' AND agent_id = ? ORDER BY id DESC LIMIT 1"
-    ).get(agent.id);
-    if (buildEvent) {
-      const { structure, x, y } = JSON.parse(buildEvent.data);
+    let structure, x, y;
+
+    if (busyDataParsed) {
+      ({ structure, x, y } = busyDataParsed);
+    } else {
+      const buildEvent = db.prepare(
+        "SELECT data FROM events WHERE type = 'build_start' AND agent_id = ? ORDER BY id DESC LIMIT 1"
+      ).get(agent.id);
+      if (buildEvent) {
+        ({ structure, x, y } = JSON.parse(buildEvent.data));
+      }
+    }
+
+    if (structure && x !== undefined && y !== undefined) {
       const structureId = Math.random().toString(36).slice(2, 10);
       db.prepare(
         "INSERT OR IGNORE INTO structures (id, x, y, type, owner_id, created_at_tick) VALUES (?, ?, ?, ?, ?, ?)"
@@ -98,11 +124,20 @@ function completeBusyAction(db, agent, tick) {
   }
 
   if (agent.busy_action === 'place_sign') {
-    const signEvent = db.prepare(
-      "SELECT data FROM events WHERE type = 'place_sign_start' AND agent_id = ? ORDER BY id DESC LIMIT 1"
-    ).get(agent.id);
-    if (signEvent) {
-      const { text, x, y } = JSON.parse(signEvent.data);
+    let text, x, y;
+
+    if (busyDataParsed) {
+      ({ text, x, y } = busyDataParsed);
+    } else {
+      const signEvent = db.prepare(
+        "SELECT data FROM events WHERE type = 'place_sign_start' AND agent_id = ? ORDER BY id DESC LIMIT 1"
+      ).get(agent.id);
+      if (signEvent) {
+        ({ text, x, y } = JSON.parse(signEvent.data));
+      }
+    }
+
+    if (text && x !== undefined && y !== undefined) {
       const signId = Math.random().toString(36).slice(2, 10);
       db.prepare(
         "INSERT OR IGNORE INTO structures (id, x, y, type, owner_id, text, created_at_tick) VALUES (?, ?, ?, 'sign', ?, ?, ?)"
@@ -111,16 +146,25 @@ function completeBusyAction(db, agent, tick) {
   }
 
   if (agent.busy_action === 'destroy') {
-    const destroyEvent = db.prepare(
-      "SELECT data FROM events WHERE type = 'destroy_start' AND agent_id = ? ORDER BY id DESC LIMIT 1"
-    ).get(agent.id);
-    if (destroyEvent) {
-      const { x, y } = JSON.parse(destroyEvent.data);
+    let x, y;
+
+    if (busyDataParsed) {
+      ({ x, y } = busyDataParsed);
+    } else {
+      const destroyEvent = db.prepare(
+        "SELECT data FROM events WHERE type = 'destroy_start' AND agent_id = ? ORDER BY id DESC LIMIT 1"
+      ).get(agent.id);
+      if (destroyEvent) {
+        ({ x, y } = JSON.parse(destroyEvent.data));
+      }
+    }
+
+    if (x !== undefined && y !== undefined) {
       db.prepare("DELETE FROM structures WHERE x = ? AND y = ?").run(x, y);
     }
   }
 
-  db.prepare("UPDATE agents SET busy_action = NULL, busy_ticks_remaining = 0 WHERE id = ?").run(agent.id);
+  db.prepare("UPDATE agents SET busy_action = NULL, busy_ticks_remaining = 0, busy_data = NULL WHERE id = ?").run(agent.id);
 }
 
 function autoEat(db, agent, tick) {
@@ -146,7 +190,7 @@ function autoEat(db, agent, tick) {
     const newHp = Math.max(0, agent.hp - 1);
     db.prepare("UPDATE agents SET hp = ? WHERE id = ?").run(newHp, agent.id);
     if (newHp <= 0) {
-      db.prepare("UPDATE agents SET status = 'dead', busy_action = NULL, busy_ticks_remaining = 0 WHERE id = ?").run(agent.id);
+      db.prepare("UPDATE agents SET status = 'dead', busy_action = NULL, busy_ticks_remaining = 0, busy_data = NULL WHERE id = ?").run(agent.id);
       db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'death', ?, ?)").run(
         tick, agent.id, JSON.stringify({ cause: 'starvation' })
       );

@@ -5,12 +5,12 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - openworld-data:/app/data
+      - openworld-data:/data
     environment:
       - PORT=3001
       - WORLD_SIZE=50
       - TICK_INTERVAL=1500
-      - DB_PATH=/app/data/openworld.db
+      - DB_PATH=/data/openworld.db
     restart: unless-stopped
 
 volumes:

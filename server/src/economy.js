@@ -83,7 +83,14 @@ export function handleCraft(db, agent, params, tick) {
   if (recipe.equip) {
     if (!VALID_EQUIP_SLOTS.has(recipe.equip)) throw new Error(`Invalid equip slot: ${recipe.equip}`);
     const equipItem = Object.keys(recipe.output)[0];
+    // Return currently equipped item to inventory before equipping new one
+    const currentEquip = agent[recipe.equip];
+    if (currentEquip) {
+      addItems(db, agent.id, { [currentEquip]: 1 });
+    }
     db.prepare(`UPDATE agents SET ${recipe.equip} = ? WHERE id = ?`).run(equipItem, agent.id);
+    // Remove the newly equipped item from inventory (it's now equipped)
+    removeItems(db, agent.id, { [equipItem]: 1 });
   }
 
   return { ok: true, tick, result: { crafted: recipeName, output: recipe.output } };
@@ -147,40 +154,68 @@ export function handleTradeRespond(db, agent, params, tick) {
   const { trade_id: tradeId, accept } = params || {};
   if (!tradeId) return { ok: false, error: 'invalid_params', message: 'Need trade_id' };
 
-  const trade = db.prepare("SELECT * FROM trades WHERE id = ? AND status = 'pending'").get(tradeId);
-  if (!trade) return { ok: false, error: 'trade_not_found', message: 'Trade not found or not pending' };
-  if (trade.to_id !== agent.id) return { ok: false, error: 'not_your_trade', message: 'This trade is not for you' };
+  // Wrap entire trade response in a transaction to prevent race conditions
+  const executeTrade = db.transaction(() => {
+    // Re-check trade status inside transaction (prevents double-accept)
+    const trade = db.prepare("SELECT * FROM trades WHERE id = ? AND status = 'pending'").get(tradeId);
+    if (!trade) return { ok: false, error: 'trade_not_found', message: 'Trade not found or not pending' };
+    if (trade.to_id !== agent.id) return { ok: false, error: 'not_your_trade', message: 'This trade is not for you' };
 
-  if (trade.expires_tick <= tick) {
-    returnEscrow(db, trade);
-    db.prepare("UPDATE trades SET status = 'expired' WHERE id = ?").run(tradeId);
-    return { ok: false, error: 'trade_expired', message: 'Trade has expired' };
-  }
+    if (trade.expires_tick <= tick) {
+      returnEscrow(db, trade);
+      db.prepare("UPDATE trades SET status = 'expired' WHERE id = ?").run(tradeId);
+      return { ok: false, error: 'trade_expired', message: 'Trade has expired' };
+    }
 
-  if (!accept) {
-    returnEscrow(db, trade);
-    db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
-    return { ok: true, tick, result: { rejected: true } };
-  }
+    if (!accept) {
+      returnEscrow(db, trade);
+      db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
+      return { ok: true, tick, result: { rejected: true } };
+    }
 
-  const requested = JSON.parse(trade.request);
-  const requestMap = {};
-  for (const r of requested) { requestMap[r.item] = (requestMap[r.item] || 0) + r.qty; }
+    const requested = JSON.parse(trade.request);
+    const requestMap = {};
+    for (const r of requested) { requestMap[r.item] = (requestMap[r.item] || 0) + r.qty; }
 
-  if (!hasItems(db, agent.id, requestMap)) {
-    return { ok: false, error: 'not_enough_items', message: 'Not enough items to complete trade' };
-  }
+    if (!hasItems(db, agent.id, requestMap)) {
+      return { ok: false, error: 'not_enough_items', message: 'Not enough items to complete trade' };
+    }
 
-  removeItems(db, agent.id, requestMap);
-  addItems(db, trade.from_id, requestMap);
+    // Check receiver inventory capacity for offered items
+    const currentSlots = db.prepare("SELECT COUNT(*) as cnt FROM items WHERE agent_id = ?").get(agent.id).cnt;
+    const offer = JSON.parse(trade.offer);
+    const offerMap = {};
+    for (const o of offer) { offerMap[o.item] = (offerMap[o.item] || 0) + o.qty; }
+    const newSlots = Object.keys(offerMap).filter(item =>
+      !db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, item)
+    ).length;
+    if (currentSlots + newSlots > 20) {
+      // Return escrow and reject — receiver inventory would overflow
+      returnEscrow(db, trade);
+      db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
+      return { ok: false, error: 'inventory_full', message: 'Not enough inventory space to receive traded items' };
+    }
 
-  const offer = JSON.parse(trade.offer);
-  const offerMap = {};
-  for (const o of offer) { offerMap[o.item] = (offerMap[o.item] || 0) + o.qty; }
-  addItems(db, agent.id, offerMap);
+    // Also check proposer inventory capacity for requested items
+    const proposerSlots = db.prepare("SELECT COUNT(*) as cnt FROM items WHERE agent_id = ?").get(trade.from_id).cnt;
+    const proposerNewSlots = Object.keys(requestMap).filter(item =>
+      !db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(trade.from_id, item)
+    ).length;
+    if (proposerSlots + proposerNewSlots > 20) {
+      returnEscrow(db, trade);
+      db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
+      return { ok: false, error: 'proposer_inventory_full', message: 'Proposer does not have enough inventory space' };
+    }
 
-  db.prepare("UPDATE trades SET status = 'accepted' WHERE id = ?").run(tradeId);
-  return { ok: true, tick, result: { accepted: true } };
+    removeItems(db, agent.id, requestMap);
+    addItems(db, trade.from_id, requestMap);
+    addItems(db, agent.id, offerMap);
+
+    db.prepare("UPDATE trades SET status = 'accepted' WHERE id = ?").run(tradeId);
+    return { ok: true, tick, result: { accepted: true } };
+  });
+
+  return executeTrade();
 }
 
 function returnEscrow(db, trade) {
@@ -240,10 +275,11 @@ export function handleBuild(db, agent, params, tick) {
   removeItems(db, agent.id, cost);
 
   const ticks = BUILD_TICKS_MAP[structure] || 5;
-  db.prepare("UPDATE agents SET busy_action = 'build', busy_ticks_remaining = ? WHERE id = ?").run(ticks, agent.id);
+  const busyData = JSON.stringify({ structure, x: targetX, y: targetY });
+  db.prepare("UPDATE agents SET busy_action = 'build', busy_ticks_remaining = ?, busy_data = ? WHERE id = ?").run(ticks, busyData, agent.id);
 
   db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'build_start', ?, ?)").run(
-    tick, agent.id, JSON.stringify({ structure, x: targetX, y: targetY })
+    tick, agent.id, busyData
   );
 
   return { ok: true, tick, result: { building: structure, ticks: BUILD_TICKS_MAP[structure], at: { x: targetX, y: targetY } } };
@@ -256,10 +292,11 @@ export function handlePlaceSign(db, agent, params, tick) {
   const existing = db.prepare("SELECT id FROM structures WHERE x = ? AND y = ?").get(agent.x, agent.y);
   if (existing) return { ok: false, error: 'tile_occupied', message: 'Tile already has a structure' };
 
-  db.prepare("UPDATE agents SET busy_action = 'place_sign', busy_ticks_remaining = 2 WHERE id = ?").run(agent.id);
+  const busyData = JSON.stringify({ text: text.slice(0, 140), x: agent.x, y: agent.y });
+  db.prepare("UPDATE agents SET busy_action = 'place_sign', busy_ticks_remaining = 2, busy_data = ? WHERE id = ?").run(busyData, agent.id);
 
   db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'place_sign_start', ?, ?)").run(
-    tick, agent.id, JSON.stringify({ text: text.slice(0, 140), x: agent.x, y: agent.y })
+    tick, agent.id, busyData
   );
 
   return { ok: true, tick, result: { placing_sign: true, ticks: 2, text: text.slice(0, 140) } };
@@ -278,11 +315,23 @@ export function handleDestroy(db, agent, params, tick) {
   const structure = db.prepare("SELECT * FROM structures WHERE x = ? AND y = ?").get(targetX, targetY);
   if (!structure) return { ok: false, error: 'no_structure', message: 'No structure to destroy' };
 
-  db.prepare("UPDATE agents SET busy_action = 'destroy', busy_ticks_remaining = 5 WHERE id = ?").run(agent.id);
+  // Destroying others' structures takes longer and costs more energy
+  const isOwner = structure.owner_id === agent.id;
+  const ticks = isOwner ? 5 : 10;
+  const extraEnergy = isOwner ? 0 : 5;
+  if (extraEnergy > 0 && agent.energy < extraEnergy) {
+    return { ok: false, error: 'not_enough_energy', message: `Need ${extraEnergy} extra energy to destroy another agent's structure` };
+  }
+  if (extraEnergy > 0) {
+    db.prepare("UPDATE agents SET energy = MAX(0, energy - ?) WHERE id = ?").run(extraEnergy, agent.id);
+  }
+
+  const busyData = JSON.stringify({ structure_id: structure.id, x: targetX, y: targetY, owner: structure.owner_id });
+  db.prepare("UPDATE agents SET busy_action = 'destroy', busy_ticks_remaining = ?, busy_data = ? WHERE id = ?").run(ticks, busyData, agent.id);
 
   db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'destroy_start', ?, ?)").run(
-    tick, agent.id, JSON.stringify({ structure_id: structure.id, x: targetX, y: targetY })
+    tick, agent.id, busyData
   );
 
-  return { ok: true, tick, result: { destroying: structure.type, ticks: 5, at: { x: targetX, y: targetY } } };
+  return { ok: true, tick, result: { destroying: structure.type, ticks, owned: isOwner, at: { x: targetX, y: targetY } } };
 }
