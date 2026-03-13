@@ -6,7 +6,8 @@ export function useSocket() {
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    const s = io('/', { transports: ['websocket'] });
+    const url = import.meta.env.DEV ? 'http://localhost:3001' : '/';
+    const s = io(url, { transports: ['websocket'] });
     setSocket(s);
     s.on('connect', () => setConnected(true));
     s.on('disconnect', () => setConnected(false));

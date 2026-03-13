@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import { Application, Graphics, Container, Text, TextStyle } from 'pixi.js';
 import { drawTiles, TILE_SIZE } from './TileRenderer.js';
 import { drawAgents } from './AgentSprite.js';
@@ -13,18 +13,24 @@ export default function WorldMap({ agents, world, tiles, structures, onAgentClic
   const worldContainerRef = useRef(null);
   const scaleRef = useRef(1);
   const dragRef = useRef({ dragging: false, lastX: 0, lastY: 0 });
+  const [ready, setReady] = useState(false);
 
   // Initialize Pixi app
   useEffect(() => {
-    if (!containerRef.current || appRef.current) return;
+    if (!containerRef.current) return;
 
+    let cancelled = false;
     const app = new Application();
+
     const initApp = async () => {
       await app.init({
         resizeTo: containerRef.current,
         background: 0x111827,
         antialias: false,
       });
+
+      if (cancelled) { app.destroy(true); return; }
+
       containerRef.current.appendChild(app.canvas);
       appRef.current = app;
 
@@ -43,26 +49,34 @@ export default function WorldMap({ agents, world, tiles, structures, onAgentClic
       const agentG = new Graphics();
       agentGraphicsRef.current = agentG;
       worldContainer.addChild(agentG);
+
+      setReady(true);
     };
     initApp();
 
     return () => {
+      cancelled = true;
       if (appRef.current) {
         appRef.current.destroy(true);
         appRef.current = null;
       }
+      tileGraphicsRef.current = null;
+      agentGraphicsRef.current = null;
+      structureGraphicsRef.current = null;
+      worldContainerRef.current = null;
+      setReady(false);
     };
   }, []);
 
-  // Draw tiles (only when tiles change)
+  // Draw tiles (only when tiles change or app becomes ready)
   useEffect(() => {
-    if (!tileGraphicsRef.current || tiles.length === 0) return;
+    if (!ready || !tileGraphicsRef.current || tiles.length === 0) return;
     drawTiles(tileGraphicsRef.current, tiles);
-  }, [tiles]);
+  }, [tiles, ready]);
 
   // Draw agents (every tick)
   useEffect(() => {
-    if (!agentGraphicsRef.current) return;
+    if (!ready || !agentGraphicsRef.current) return;
     drawAgents(agentGraphicsRef.current, agents, selectedAgentId);
 
     // Remove old name texts
@@ -85,11 +99,11 @@ export default function WorldMap({ agents, world, tiles, structures, onAgentClic
         nameTextsRef.current.push(text);
       }
     }
-  }, [agents, selectedAgentId]);
+  }, [agents, selectedAgentId, ready]);
 
   // Draw structures
   useEffect(() => {
-    if (!structureGraphicsRef.current) return;
+    if (!ready || !structureGraphicsRef.current) return;
     const g = structureGraphicsRef.current;
     g.clear();
 
@@ -103,7 +117,7 @@ export default function WorldMap({ agents, world, tiles, structures, onAgentClic
       g.rect(s.x * TILE_SIZE + 4, s.y * TILE_SIZE + 4, TILE_SIZE - 8, TILE_SIZE - 8);
       g.fill(color);
     }
-  }, [structures]);
+  }, [structures, ready]);
 
   // Mouse handlers for pan/zoom
   useEffect(() => {
