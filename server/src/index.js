@@ -19,6 +19,22 @@ const io = new Server(httpServer, { cors: { origin: '*' } });
 app.use(cors());
 app.use(express.json());
 
+// Serve skill.md for OpenClaw agents
+const skillPath = path.join(__dirname, '..', '..', 'skill');
+app.get('/skill.md', (req, res) => {
+  res.type('text/markdown').sendFile(path.join(skillPath, 'SKILL.md'));
+});
+app.get('/skill.json', (req, res) => {
+  res.json({
+    name: 'openworld',
+    version: '0.1.0',
+    description: 'Live as an autonomous agent in a persistent 2D world',
+    homepage: `${req.protocol}://${req.get('host')}`,
+    skills: [{ file: 'SKILL.md', url: `${req.protocol}://${req.get('host')}/skill.md` }],
+    api_base: `${req.protocol}://${req.get('host')}/api`,
+  });
+});
+
 // Database
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'openworld.db');
 const db = createDb(DB_PATH);
