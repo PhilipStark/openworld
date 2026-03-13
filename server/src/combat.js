@@ -1,4 +1,114 @@
-// Stub — will be implemented in Task 6
-export function handleAttack() { return { ok: false, error: 'not_implemented' }; }
-export function handleSteal() { return { ok: false, error: 'not_implemented' }; }
-export function handleLoot() { return { ok: false, error: 'not_implemented' }; }
+import { getAgent } from './agent.js';
+
+export function handleAttack(db, agent, params, tick) {
+  const targetId = params?.agent_id;
+  if (!targetId) return { ok: false, error: 'invalid_params', message: 'Need agent_id' };
+
+  const target = getAgent(db, targetId);
+  if (!target) return { ok: false, error: 'target_not_found', message: 'Target not found' };
+  if (target.status === 'dead') return { ok: false, error: 'target_dead', message: 'Cannot attack dead agent' };
+
+  const dist = Math.abs(agent.x - target.x) + Math.abs(agent.y - target.y);
+  if (dist > 1) return { ok: false, error: 'not_adjacent', message: 'Must be adjacent to attack' };
+
+  let baseDmg = 15 + Math.floor(Math.random() * 11); // 15-25
+  if (agent.weapon === 'sword') baseDmg += 10;
+  if (target.shield === 'shield') baseDmg = Math.max(0, baseDmg - 5);
+
+  const newHp = Math.max(0, target.hp - baseDmg);
+  db.prepare("UPDATE agents SET hp = ? WHERE id = ?").run(newHp, targetId);
+
+  // Interrupt busy action
+  if (target.busy_action) {
+    db.prepare("UPDATE agents SET busy_action = NULL, busy_ticks_remaining = 0 WHERE id = ?").run(targetId);
+  }
+
+  // Log event
+  db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'attack', ?, ?)").run(
+    tick, agent.id, JSON.stringify({ target_id: targetId, damage: baseDmg, target_hp: newHp })
+  );
+
+  // Check death
+  if (newHp <= 0) {
+    killAgent(db, targetId, tick);
+  }
+
+  return { ok: true, tick, result: { damage: baseDmg, target_hp: newHp, killed: newHp <= 0 } };
+}
+
+export function handleSteal(db, agent, params, tick) {
+  const targetId = params?.agent_id;
+  if (!targetId) return { ok: false, error: 'invalid_params', message: 'Need agent_id' };
+
+  const target = getAgent(db, targetId);
+  if (!target) return { ok: false, error: 'target_not_found', message: 'Target not found' };
+
+  const dist = Math.abs(agent.x - target.x) + Math.abs(agent.y - target.y);
+  if (dist > 1) return { ok: false, error: 'not_adjacent', message: 'Must be adjacent to steal' };
+
+  // 50% chance to fail
+  if (Math.random() < 0.5) {
+    db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'steal_failed', ?, ?)").run(
+      tick, agent.id, JSON.stringify({ target_id: targetId })
+    );
+    db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'steal_attempt_detected', ?, ?)").run(
+      tick, targetId, JSON.stringify({ thief_id: agent.id })
+    );
+    return { ok: true, tick, result: { stolen: false, caught: true } };
+  }
+
+  const targetItems = db.prepare("SELECT item, qty FROM items WHERE agent_id = ?").all(targetId);
+  if (targetItems.length === 0) return { ok: true, tick, result: { stolen: false, nothing_to_steal: true } };
+
+  const stolen = targetItems[Math.floor(Math.random() * targetItems.length)];
+  const stolenQty = 1;
+
+  db.prepare("UPDATE items SET qty = qty - ? WHERE agent_id = ? AND item = ?").run(stolenQty, targetId, stolen.item);
+  db.prepare("DELETE FROM items WHERE agent_id = ? AND item = ? AND qty <= 0").run(targetId, stolen.item);
+
+  const existing = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, stolen.item);
+  if (existing) {
+    db.prepare("UPDATE items SET qty = qty + ? WHERE agent_id = ? AND item = ?").run(stolenQty, agent.id, stolen.item);
+  } else {
+    db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, ?, ?)").run(agent.id, stolen.item, stolenQty);
+  }
+
+  db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'steal', ?, ?)").run(
+    tick, agent.id, JSON.stringify({ target_id: targetId, item: stolen.item, qty: stolenQty })
+  );
+
+  return { ok: true, tick, result: { stolen: true, item: stolen.item, qty: stolenQty } };
+}
+
+export function handleLoot(db, agent, params, tick) {
+  const targetId = params?.agent_id;
+  if (!targetId) return { ok: false, error: 'invalid_params', message: 'Need agent_id' };
+
+  const target = getAgent(db, targetId);
+  if (!target) return { ok: false, error: 'target_not_found', message: 'Target not found' };
+  if (target.status !== 'dead') return { ok: false, error: 'target_alive', message: 'Can only loot dead agents' };
+
+  if (agent.x !== target.x || agent.y !== target.y) {
+    return { ok: false, error: 'not_same_tile', message: 'Must be on same tile to loot' };
+  }
+
+  const items = db.prepare("SELECT item, qty FROM items WHERE agent_id = ?").all(targetId);
+  for (const item of items) {
+    const existing = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, item.item);
+    if (existing) {
+      db.prepare("UPDATE items SET qty = qty + ? WHERE agent_id = ? AND item = ?").run(item.qty, agent.id, item.item);
+    } else {
+      db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, ?, ?)").run(agent.id, item.item, item.qty);
+    }
+  }
+  db.prepare("DELETE FROM items WHERE agent_id = ?").run(targetId);
+
+  return { ok: true, tick, result: { looted: items } };
+}
+
+function killAgent(db, agentId, tick) {
+  db.prepare("UPDATE agents SET status = 'dead', busy_action = NULL, busy_ticks_remaining = 0 WHERE id = ?").run(agentId);
+  db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'death', ?, ?)").run(
+    tick, agentId, JSON.stringify({})
+  );
+}
