@@ -19,6 +19,7 @@ describe('actions', () => {
   afterEach(() => { db.close(); });
 
   it('move north decreases y by 1', () => {
+    db.prepare("UPDATE tiles SET type = 'grass' WHERE x = 5 AND y = 4").run();
     const result = dispatch(db, agentId, { action: 'move', params: { direction: 'north' }, thinking: 'going north' }, 1);
     expect(result.ok).toBe(true);
     const agent = getAgent(db, agentId);
@@ -26,6 +27,7 @@ describe('actions', () => {
   });
 
   it('move south increases y by 1', () => {
+    db.prepare("UPDATE tiles SET type = 'grass' WHERE x = 5 AND y = 6").run();
     const result = dispatch(db, agentId, { action: 'move', params: { direction: 'south' }, thinking: 'going south' }, 1);
     expect(result.ok).toBe(true);
     const agent = getAgent(db, agentId);
