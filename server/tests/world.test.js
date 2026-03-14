@@ -17,7 +17,7 @@ describe('world', () => {
 
   it('every tile has a valid type', () => {
     generateWorld(db, 10, 10);
-    const validTypes = ['grass', 'water', 'rock', 'sand', 'forest', 'mountain', 'fertile_soil'];
+    const validTypes = ['grass', 'water', 'rock', 'sand', 'forest', 'mountain', 'fertile_soil', 'plaza', 'path'];
     for (let x = 0; x < 10; x++) {
       for (let y = 0; y < 10; y++) {
         const tile = getTile(db, x, y);

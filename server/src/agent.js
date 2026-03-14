@@ -20,15 +20,29 @@ export function connectAgent(db, id) {
   const agent = getAgent(db, id);
   if (!agent) throw new Error('Agent not found');
 
-  // Spawn away from other agents to reduce clustering
-  // Pick 5 random passable tiles and choose the one farthest from all agents
+  // Spawn near town center (within 8 tiles) on passable ground
+  // This creates natural social interaction from the start
+  const { width, height } = db.prepare('SELECT MAX(x) + 1 as width, MAX(y) + 1 as height FROM tiles').get();
+  const centerX = Math.floor((width || 50) / 2);
+  const centerY = Math.floor((height || 50) / 2);
+
   const candidates = db.prepare(
-    "SELECT x, y FROM tiles WHERE type NOT IN ('water', 'mountain') ORDER BY RANDOM() LIMIT 5"
-  ).all();
+    "SELECT x, y FROM tiles WHERE type NOT IN ('water', 'mountain') AND ABS(x - ?) + ABS(y - ?) <= 8 ORDER BY RANDOM() LIMIT 10"
+  ).all(centerX, centerY);
+
+  // Fallback: anywhere passable if no town tiles available
+  if (candidates.length === 0) {
+    const fallback = db.prepare(
+      "SELECT x, y FROM tiles WHERE type NOT IN ('water', 'mountain') ORDER BY RANDOM() LIMIT 5"
+    ).all();
+    candidates.push(...fallback);
+  }
+
   const otherAgents = db.prepare(
     "SELECT x, y FROM agents WHERE status IN ('awake', 'exhausted') AND id != ?"
   ).all(id);
 
+  // Pick tile with most space from other agents (but still near center)
   let tile = candidates[0];
   if (otherAgents.length > 0 && candidates.length > 1) {
     let bestDist = -1;

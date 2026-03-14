@@ -542,6 +542,48 @@ function generateCharTexture(seed, direction, walkFrame) {
   return texture;
 }
 
+// ─── Plaza & Path tiles ──────────────────────────────────────────
+
+function generatePlaza(ctx, rng) {
+  // Cobblestone plaza — warm stone tiles
+  for (let y = 0; y < TILE; y++) {
+    for (let x = 0; x < TILE; x++) {
+      ctx.fillStyle = colorVariant('#b8a88a', rng, 10);
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+  // Stone tile grid lines
+  ctx.fillStyle = 'rgba(90,75,55,0.4)';
+  for (let i = 0; i < TILE; i += 8) {
+    ctx.fillRect(0, i, TILE, 1);
+    ctx.fillRect(i, 0, 1, TILE);
+  }
+  // Occasional darker cobblestone accent
+  for (let i = 0; i < 4; i++) {
+    const px = Math.floor(rng() * 4) * 8 + 2;
+    const py = Math.floor(rng() * 4) * 8 + 2;
+    ctx.fillStyle = colorVariant('#9a8a6a', rng, 8);
+    ctx.fillRect(px, py, 4, 4);
+  }
+}
+
+function generatePath(ctx, rng) {
+  // Dirt path — lighter brown, flat
+  for (let y = 0; y < TILE; y++) {
+    for (let x = 0; x < TILE; x++) {
+      ctx.fillStyle = colorVariant('#c4a56e', rng, 8);
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+  // Small pebbles
+  for (let i = 0; i < 6; i++) {
+    const px = Math.floor(rng() * (TILE - 2));
+    const py = Math.floor(rng() * (TILE - 2));
+    ctx.fillStyle = colorVariant('#a89060', rng, 10);
+    ctx.fillRect(px, py, 2, 2);
+  }
+}
+
 // ─── TILE TEXTURES (with variation seeds per position) ─────────────
 
 const TILE_GENERATORS = {
@@ -552,6 +594,8 @@ const TILE_GENERATORS = {
   sand: generateSand,
   mountain: generateMountain,
   fertile_soil: generateFertileSoil,
+  plaza: generatePlaza,
+  path: generatePath,
 };
 
 export function getTileTexture(type, x, y, frame = 0) {

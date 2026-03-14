@@ -6,7 +6,7 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { Application, Container, Graphics, Text, TextStyle, Ticker } from 'pixi.js';
 import { TILE_SIZE, drawTiles, updateWaterAnimation } from './TileRenderer.js';
-import { createAgentContainer, syncAgents, updateAgentMovement, getAgentDisplayPos, clearAgentStates } from './AgentSprite.js';
+import { createAgentContainer, syncAgents, updateAgentMovement, getAgentDisplayPos, clearAgentStates, showSpeechBubble } from './AgentSprite.js';
 import { createStructureLayer, syncStructures } from './StructureRenderer.js';
 import { preloadTextures } from './SpriteGenerator.js';
 

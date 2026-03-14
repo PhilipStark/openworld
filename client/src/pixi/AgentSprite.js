@@ -82,11 +82,30 @@ const thinkStyle = new TextStyle({
   stroke: { color: 0x2a1040, width: 2 },
 });
 
+const speechStyle = new TextStyle({
+  fontSize: 8,
+  fontFamily: '"Press Start 2P", monospace',
+  fill: 0x222222,
+  wordWrap: true,
+  wordWrapWidth: 100,
+  letterSpacing: -1,
+});
+
+// Track speech bubbles with timers
+const speechBubbles = new Map(); // agentId -> { text, expiresAt }
+
 export function createAgentContainer() {
   const container = new Container();
   container.label = 'agentLayer';
   container.sortableChildren = true;
   return container;
+}
+
+/**
+ * Show a speech bubble for an agent (called from outside)
+ */
+export function showSpeechBubble(agentId, text) {
+  speechBubbles.set(agentId, { text: text.slice(0, 60), expiresAt: Date.now() + 5000 });
 }
 
 /**
@@ -220,6 +239,54 @@ export function syncAgents(agentContainer, agents, selectedId) {
         // Pulsing glow effect
         selection.circle(0, 4, TILE_SIZE * 0.6);
         selection.stroke({ color: 0xf1c40f, width: 1, alpha: 0.3 });
+      }
+    }
+
+    // Speech bubble
+    let bubble = agentGroup.children.find(c => c.label === 'speechBubble');
+    const speechData = speechBubbles.get(agent.id);
+    if (speechData && Date.now() < speechData.expiresAt) {
+      if (!bubble) {
+        bubble = new Container();
+        bubble.label = 'speechBubble';
+        bubble.zIndex = 20;
+
+        const bg = new Graphics();
+        bg.label = 'speechBg';
+        bubble.addChild(bg);
+
+        const txt = new Text({ text: '', style: speechStyle });
+        txt.anchor.set(0.5, 1);
+        txt.label = 'speechText';
+        bubble.addChild(txt);
+
+        agentGroup.addChild(bubble);
+      }
+
+      const txt = bubble.children.find(c => c.label === 'speechText');
+      const bg = bubble.children.find(c => c.label === 'speechBg');
+      if (txt && bg) {
+        txt.text = speechData.text;
+        txt.y = -TILE_SIZE * 0.9;
+
+        bg.clear();
+        const pad = 4;
+        const w = Math.min(txt.width + pad * 2, 110);
+        const h = txt.height + pad * 2;
+        bg.roundRect(-w / 2, -TILE_SIZE * 0.9 - h, w, h, 4);
+        bg.fill({ color: 0xffffff, alpha: 0.92 });
+        bg.stroke({ color: 0xcccccc, width: 1 });
+        // Speech bubble tail
+        bg.moveTo(-3, -TILE_SIZE * 0.9);
+        bg.lineTo(0, -TILE_SIZE * 0.9 + 4);
+        bg.lineTo(3, -TILE_SIZE * 0.9);
+        bg.fill({ color: 0xffffff, alpha: 0.92 });
+      }
+      bubble.visible = true;
+    } else {
+      if (bubble) bubble.visible = false;
+      if (speechData && Date.now() >= speechData.expiresAt) {
+        speechBubbles.delete(agent.id);
       }
     }
 

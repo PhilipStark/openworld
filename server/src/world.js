@@ -8,6 +8,8 @@ const TILE_RESOURCES = {
   water: () => ({ resource: 'fish', qty: 2 }),
   sand: () => ({ resource: null, qty: 0 }),
   mountain: () => ({ resource: 'stone', qty: 5 }),
+  plaza: () => ({ resource: null, qty: 0 }),
+  path: () => ({ resource: null, qty: 0 }),
 };
 
 function noiseToTileType(elevation, moisture) {
@@ -20,6 +22,11 @@ function noiseToTileType(elevation, moisture) {
   return 'grass';
 }
 
+/**
+ * Generate a world with distinct biomes and a central town.
+ * Resources are regionalized by quadrant to encourage trade and movement.
+ * NE = forest (wood, berries), SE = rock (stone), SW = water (fish), NW = farmland (wheat)
+ */
 export function generateWorld(db, width, height, seed) {
   const noise2D = createNoise2D(seed ? () => seed : undefined);
 
@@ -31,18 +38,59 @@ export function generateWorld(db, width, height, seed) {
     for (const t of tiles) insert.run(t.x, t.y, t.type, t.resource, t.qty);
   });
 
+  const centerX = Math.floor(width / 2);
+  const centerY = Math.floor(height / 2);
   const tiles = [];
+
   for (let x = 0; x < width; x++) {
     for (let y = 0; y < height; y++) {
-      const elevation = noise2D(x / 20, y / 20);
-      const moisture = noise2D((x + 1000) / 15, (y + 1000) / 15);
-      const type = noiseToTileType(elevation, moisture);
+      const dx = x - centerX;
+      const dy = y - centerY;
+      const distFromCenter = Math.sqrt(dx * dx + dy * dy);
+
+      let type;
+
+      // Town center plaza (radius 3)
+      if (distFromCenter <= 3) {
+        type = 'plaza';
+      }
+      // Paths radiating from center (cardinal directions, 1 tile wide)
+      else if (distFromCenter <= width * 0.4 && (Math.abs(dx) === 0 || Math.abs(dy) === 0) && distFromCenter > 3) {
+        type = 'path';
+      }
+      // Natural terrain with quadrant bias for resource regionalization
+      else {
+        const elevation = noise2D(x / 15, y / 15);
+        const moisture = noise2D((x + 1000) / 12, (y + 1000) / 12);
+        const angle = Math.atan2(dy, dx);
+        const quadrant = Math.floor(((angle + Math.PI) / (Math.PI * 2)) * 4) % 4;
+        // Bias: 0=forest, 1=rocky, 2=watery, 3=farmland
+        const elevBias = [0.15, 0.25, -0.15, -0.1][quadrant];
+        const moistBias = [0.2, -0.1, -0.2, 0.15][quadrant];
+        type = noiseToTileType(elevation + elevBias, moisture + moistBias);
+      }
+
       const res = TILE_RESOURCES[type]();
       tiles.push({ x, y, type, resource: res.resource, qty: res.qty });
     }
   }
 
   batch(tiles);
+
+  // Place town infrastructure at center (no owner = public)
+  const insertStruct = db.prepare(
+    "INSERT OR IGNORE INTO structures (id, x, y, type, owner_id, text, created_at_tick) VALUES (?, ?, ?, ?, NULL, ?, 0)"
+  );
+  const townStructures = [
+    { x: centerX, y: centerY, type: 'crafting_table', text: null },
+    { x: centerX + 1, y: centerY, type: 'sign', text: 'Town Center - All agents welcome' },
+    { x: centerX - 1, y: centerY, type: 'sign', text: 'Trade here! Leave signs with offers' },
+    { x: centerX, y: centerY - 1, type: 'shelter', text: null },
+    { x: centerX, y: centerY + 1, type: 'shelter', text: null },
+  ];
+  for (const s of townStructures) {
+    insertStruct.run('town_' + Math.random().toString(36).slice(2, 8), s.x, s.y, s.type, s.text);
+  }
 }
 
 export function getTile(db, x, y) {

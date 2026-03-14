@@ -103,27 +103,34 @@ export function broadcastTick(io, db, tick) {
 
   const thinkingMap = {};
   const actionMap = {};
+  const speechMap = {};
   for (const evt of events) {
     const data = JSON.parse(evt.data || '{}');
     if (evt.type === 'thinking') {
       thinkingMap[evt.agent_id] = data.thinking;
       actionMap[evt.agent_id] = data.action;
     }
+    if (evt.type === 'speak') {
+      speechMap[evt.agent_id] = data.message;
+    }
   }
 
-  // Add thinking/action to deltas
+  // Add thinking/action/speech to deltas
   for (const delta of agentDeltas) {
     if (thinkingMap[delta.id]) delta.thinking = thinkingMap[delta.id];
     if (actionMap[delta.id]) delta.last_action = actionMap[delta.id];
+    if (speechMap[delta.id]) delta.speech = speechMap[delta.id];
   }
 
-  // Also add thinking for agents that didn't change position but did think
-  for (const agentId of Object.keys(thinkingMap)) {
-    if (!agentDeltas.find(d => d.id === agentId)) {
+  // Also add thinking/speech for agents that didn't change position
+  const enrichedIds = new Set(agentDeltas.map(d => d.id));
+  for (const agentId of new Set([...Object.keys(thinkingMap), ...Object.keys(speechMap)])) {
+    if (!enrichedIds.has(agentId)) {
       agentDeltas.push({
         id: agentId,
         thinking: thinkingMap[agentId],
         last_action: actionMap[agentId],
+        speech: speechMap[agentId],
       });
     }
   }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { showSpeechBubble } from '../pixi/AgentSprite.js';
 
 export function useWorld(socket) {
   const [agents, setAgents] = useState([]);
@@ -61,12 +62,15 @@ export function useWorld(socket) {
       // Apply agent deltas
       if (data.agents) {
         for (const delta of data.agents) {
+          // Trigger speech bubble on map
+          if (delta.speech) {
+            showSpeechBubble(delta.id, delta.speech);
+          }
+
           const existing = map.get(delta.id);
           if (existing) {
-            // Merge delta into existing
             map.set(delta.id, { ...existing, ...delta });
           } else {
-            // New agent
             map.set(delta.id, delta);
           }
         }
