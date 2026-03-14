@@ -75,6 +75,14 @@ export function createDb(path = './openworld.db') {
       FOREIGN KEY (to_id) REFERENCES agents(id)
     );
 
+    CREATE TABLE IF NOT EXISTS storage_items (
+      structure_id TEXT NOT NULL,
+      item TEXT NOT NULL,
+      qty INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (structure_id, item),
+      FOREIGN KEY (structure_id) REFERENCES structures(id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_events_tick ON events(tick);
     CREATE INDEX IF NOT EXISTS idx_events_agent_type ON events(agent_id, type);
     CREATE INDEX IF NOT EXISTS idx_structures_pos ON structures(x, y);
@@ -83,6 +91,9 @@ export function createDb(path = './openworld.db') {
     CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
     CREATE INDEX IF NOT EXISTS idx_tiles_resource ON tiles(x, y, resource_qty) WHERE resource IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_agents_name ON agents(name);
+    CREATE INDEX IF NOT EXISTS idx_agents_pos ON agents(x, y) WHERE status = 'awake';
+    CREATE INDEX IF NOT EXISTS idx_structures_owner ON structures(owner_id);
+    CREATE INDEX IF NOT EXISTS idx_structures_type_pos ON structures(type, x, y);
   `);
 
   // Migration: add busy_data column for reliable action completion

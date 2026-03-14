@@ -15,7 +15,13 @@ const ENERGY_COSTS = {
   move: 1, speak: 0, whisper: 0, gather: 3, craft: 2, build: 5,
   give: 0, trade_propose: 0, trade_respond: 0, place_sign: 1,
   attack: 5, steal: 3, loot: 1, destroy: 5, look: 0, rest: 0,
-  set_bio: 0, cancel: 0,
+  set_bio: 0, cancel: 0, eat: 0, deposit: 0, withdraw: 0,
+};
+
+const FOOD_ITEMS = {
+  bread: { hp: 20, energy: 15 },
+  fish: { hp: 15, energy: 10 },
+  berries: { hp: 5, energy: 5 },
 };
 
 export function dispatch(db, agentId, actionData, tick) {
@@ -32,7 +38,7 @@ export function dispatch(db, agentId, actionData, tick) {
   if (agent.status !== 'awake') return { ok: false, error: 'agent_not_awake', message: `Agent is ${agent.status}` };
 
   if (actionData.action === 'cancel') {
-    db.prepare("UPDATE agents SET busy_action = NULL, busy_ticks_remaining = 0 WHERE id = ?").run(agentId);
+    db.prepare("UPDATE agents SET busy_action = NULL, busy_ticks_remaining = 0, busy_data = NULL WHERE id = ?").run(agentId);
     return { ok: true, tick, result: { cancelled: true } };
   }
 
@@ -65,6 +71,9 @@ export function dispatch(db, agentId, actionData, tick) {
     case 'rest': result = handleRest(db, agent, tick); break;
     case 'set_bio': result = handleSetBio(db, agent, actionData.params, tick); break;
     case 'gather': result = handleGather(db, agent, actionData.params, tick); break;
+    case 'eat': result = handleEat(db, agent, actionData.params, tick); break;
+    case 'deposit': result = handleDeposit(db, agent, actionData.params, tick); break;
+    case 'withdraw': result = handleWithdraw(db, agent, actionData.params, tick); break;
     case 'speak': result = handleSpeak(db, agent, actionData.params, tick); break;
     case 'whisper': result = handleWhisper(db, agent, actionData.params, tick); break;
     case 'attack': result = combatHandlers.handleAttack(db, agent, actionData.params, tick); break;
@@ -108,7 +117,7 @@ function handleMove(db, agent, params, tick) {
   if (blocking) return { ok: false, error: 'blocked_by_structure', message: 'Path blocked by wall' };
 
   const door = db.prepare("SELECT * FROM structures WHERE x = ? AND y = ? AND type = 'door'").get(newX, newY);
-  if (door && door.owner_id !== agent.id) {
+  if (door && door.owner_id && door.owner_id !== agent.id) {
     return { ok: false, error: 'blocked_by_door', message: 'Door is locked (not your door)' };
   }
 
@@ -122,9 +131,12 @@ function handleLook(db, agent, tick) {
 }
 
 function handleRest(db, agent, tick) {
-  const newEnergy = Math.min(100, agent.energy + 10);
+  // Shelter bonus: +20 energy instead of +10
+  const shelter = db.prepare("SELECT id FROM structures WHERE x = ? AND y = ? AND type = 'shelter'").get(agent.x, agent.y);
+  const restAmount = shelter ? 20 : 10;
+  const newEnergy = Math.min(100, agent.energy + restAmount);
   db.prepare("UPDATE agents SET energy = ? WHERE id = ?").run(newEnergy, agent.id);
-  return { ok: true, tick, result: { energy: newEnergy } };
+  return { ok: true, tick, result: { energy: newEnergy, shelter_bonus: !!shelter } };
 }
 
 function handleSetBio(db, agent, params, tick) {
@@ -195,6 +207,105 @@ function handleGather(db, agent, params, tick) {
   );
 
   return { ok: true, tick, result: { gathering: tile.resource, ticks: gatherTicks } };
+}
+
+function handleEat(db, agent, params, tick) {
+  const item = params?.item;
+  if (!item) {
+    // Auto-pick best food
+    const foodOrder = ['berries', 'fish', 'bread'];
+    for (const foodName of foodOrder) {
+      const food = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, foodName);
+      if (food && food.qty > 0) {
+        const stats = FOOD_ITEMS[foodName];
+        const newHp = Math.min(100, agent.hp + stats.hp);
+        const newEnergy = Math.min(100, agent.energy + stats.energy);
+        db.prepare("UPDATE agents SET hp = ?, energy = ? WHERE id = ?").run(newHp, newEnergy, agent.id);
+        db.prepare("UPDATE items SET qty = qty - 1 WHERE agent_id = ? AND item = ?").run(agent.id, foodName);
+        db.prepare("DELETE FROM items WHERE agent_id = ? AND item = ? AND qty <= 0").run(agent.id, foodName);
+        return { ok: true, tick, result: { ate: foodName, hp: newHp, energy: newEnergy } };
+      }
+    }
+    return { ok: false, error: 'no_food', message: 'No food in inventory (need berries, fish, or bread)' };
+  }
+
+  const stats = FOOD_ITEMS[item];
+  if (!stats) return { ok: false, error: 'not_food', message: `${item} is not edible` };
+
+  const has = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, item);
+  if (!has || has.qty <= 0) return { ok: false, error: 'not_enough_items', message: `No ${item} in inventory` };
+
+  const newHp = Math.min(100, agent.hp + stats.hp);
+  const newEnergy = Math.min(100, agent.energy + stats.energy);
+  db.prepare("UPDATE agents SET hp = ?, energy = ? WHERE id = ?").run(newHp, newEnergy, agent.id);
+  db.prepare("UPDATE items SET qty = qty - 1 WHERE agent_id = ? AND item = ?").run(agent.id, item);
+  db.prepare("DELETE FROM items WHERE agent_id = ? AND item = ? AND qty <= 0").run(agent.id, item);
+
+  return { ok: true, tick, result: { ate: item, hp: newHp, energy: newEnergy } };
+}
+
+function handleDeposit(db, agent, params, tick) {
+  const { item, qty } = params || {};
+  if (!item || !qty || qty <= 0) return { ok: false, error: 'invalid_params', message: 'Need item and qty' };
+
+  // Find adjacent or same-tile storage owned by agent
+  const storage = db.prepare(
+    "SELECT * FROM structures WHERE type = 'storage' AND owner_id = ? AND ABS(x - ?) + ABS(y - ?) <= 1"
+  ).get(agent.id, agent.x, agent.y);
+  if (!storage) return { ok: false, error: 'no_storage', message: 'No owned storage nearby' };
+
+  const has = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, item);
+  if (!has || has.qty < qty) return { ok: false, error: 'not_enough_items', message: `Not enough ${item}` };
+
+  // Check storage capacity (max 50 slots)
+  const storageSlots = db.prepare("SELECT COUNT(*) as cnt FROM storage_items WHERE structure_id = ?").get(storage.id).cnt;
+  const existingInStorage = db.prepare("SELECT qty FROM storage_items WHERE structure_id = ? AND item = ?").get(storage.id, item);
+  if (storageSlots >= 50 && !existingInStorage) {
+    return { ok: false, error: 'storage_full', message: 'Storage full (50 slots)' };
+  }
+
+  // Move items
+  db.prepare("UPDATE items SET qty = qty - ? WHERE agent_id = ? AND item = ?").run(qty, agent.id, item);
+  db.prepare("DELETE FROM items WHERE agent_id = ? AND item = ? AND qty <= 0").run(agent.id, item);
+
+  if (existingInStorage) {
+    db.prepare("UPDATE storage_items SET qty = qty + ? WHERE structure_id = ? AND item = ?").run(qty, storage.id, item);
+  } else {
+    db.prepare("INSERT INTO storage_items (structure_id, item, qty) VALUES (?, ?, ?)").run(storage.id, item, qty);
+  }
+
+  return { ok: true, tick, result: { deposited: item, qty, storage_id: storage.id } };
+}
+
+function handleWithdraw(db, agent, params, tick) {
+  const { item, qty } = params || {};
+  if (!item || !qty || qty <= 0) return { ok: false, error: 'invalid_params', message: 'Need item and qty' };
+
+  // Find adjacent or same-tile storage owned by agent
+  const storage = db.prepare(
+    "SELECT * FROM structures WHERE type = 'storage' AND owner_id = ? AND ABS(x - ?) + ABS(y - ?) <= 1"
+  ).get(agent.id, agent.x, agent.y);
+  if (!storage) return { ok: false, error: 'no_storage', message: 'No owned storage nearby' };
+
+  const stored = db.prepare("SELECT qty FROM storage_items WHERE structure_id = ? AND item = ?").get(storage.id, item);
+  if (!stored || stored.qty < qty) return { ok: false, error: 'not_in_storage', message: `Not enough ${item} in storage` };
+
+  // Check inventory capacity
+  const invCount = db.prepare("SELECT COUNT(*) as cnt FROM items WHERE agent_id = ?").get(agent.id).cnt;
+  const hasInInv = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, item);
+  if (invCount >= 20 && !hasInInv) return { ok: false, error: 'inventory_full', message: 'Inventory full (20 slots)' };
+
+  // Move items
+  db.prepare("UPDATE storage_items SET qty = qty - ? WHERE structure_id = ? AND item = ?").run(qty, storage.id, item);
+  db.prepare("DELETE FROM storage_items WHERE structure_id = ? AND item = ? AND qty <= 0").run(storage.id, item);
+
+  if (hasInInv) {
+    db.prepare("UPDATE items SET qty = qty + ? WHERE agent_id = ? AND item = ?").run(qty, agent.id, item);
+  } else {
+    db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, ?, ?)").run(agent.id, item, qty);
+  }
+
+  return { ok: true, tick, result: { withdrew: item, qty, storage_id: storage.id } };
 }
 
 function handleSpeak(db, agent, params, tick) {

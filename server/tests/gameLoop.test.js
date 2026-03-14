@@ -51,7 +51,11 @@ describe('gameLoop', () => {
     const { id } = registerAgent(db, 'Hungry');
     connectAgent(db, id);
 
-    processTick(db, 2400);
+    // AutoEat is staggered: agent eats at tick where (tick % 2400) == hash(id) % 100
+    // Process all ticks in the 0-99 window to guarantee the agent's bucket is hit
+    for (let t = 0; t < 100; t++) {
+      processTick(db, t);
+    }
     const agent = getAgent(db, id);
     expect(agent.hp).toBe(99);
   });
@@ -62,7 +66,10 @@ describe('gameLoop', () => {
     db.prepare("UPDATE agents SET hp = 80 WHERE id = ?").run(id);
     db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, 'bread', 1)").run(id);
 
-    processTick(db, 2400);
+    // Process all ticks in the stagger window
+    for (let t = 2400; t < 2500; t++) {
+      processTick(db, t);
+    }
     const agent = getAgent(db, id);
     expect(agent.hp).toBe(100);
   });

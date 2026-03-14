@@ -4,6 +4,14 @@ import { expireTrades } from './economy.js';
 
 const DAY_LENGTH = 2400;
 
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
 const FOOD_ITEMS = {
   bread: { hp: 20, energy: 15 },
   fish: { hp: 15, energy: 10 },
@@ -37,11 +45,17 @@ export function processTick(db, tick) {
     db.prepare("UPDATE agents SET status = 'exhausted', busy_action = 'rest', busy_ticks_remaining = 5 WHERE id = ?").run(agent.id);
   }
 
-  // 4. Day boundary: hunger + auto-eat (only for awake and exhausted, not sleeping)
-  if (tick % DAY_LENGTH === 0 && tick > 0) {
+  // 4. Hunger: stagger autoEat across 100-tick window around day boundary
+  // Each agent eats at tick where (tick % DAY_LENGTH) matches their hash bucket
+  const dayPhase = tick % DAY_LENGTH;
+  if (dayPhase < 100 && tick > 0) {
+    // Process agents whose bucket matches this tick's phase
     const alive = db.prepare("SELECT * FROM agents WHERE status IN ('awake', 'exhausted')").all();
     for (const agent of alive) {
-      autoEat(db, agent, tick);
+      const bucket = simpleHash(agent.id) % 100;
+      if (bucket === dayPhase) {
+        autoEat(db, agent, tick);
+      }
     }
   }
 
@@ -196,6 +210,7 @@ function autoEat(db, agent, tick) {
     db.prepare("UPDATE agents SET hp = ? WHERE id = ?").run(newHp, agent.id);
     if (newHp <= 0) {
       db.prepare("UPDATE agents SET status = 'dead', busy_action = NULL, busy_ticks_remaining = 0, busy_data = NULL WHERE id = ?").run(agent.id);
+      db.prepare("UPDATE structures SET owner_id = NULL WHERE owner_id = ? AND type = 'door'").run(agent.id);
       db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'death', ?, ?)").run(
         tick, agent.id, JSON.stringify({ cause: 'starvation' })
       );

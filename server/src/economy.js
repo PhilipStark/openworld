@@ -3,11 +3,11 @@ import { getAgent, getInventory } from './agent.js';
 
 const RECIPES = {
   plank:          { input: { wood: 1 },                output: { plank: 2 } },
-  sword:          { input: { plank: 2, stone: 2 },     output: { sword: 1 },    equip: 'weapon' },
-  shield:         { input: { plank: 2, stone: 1 },     output: { shield: 1 },   equip: 'shield' },
-  axe:            { input: { plank: 1, stone: 2 },     output: { axe: 1 },      equip: 'tool' },
+  sword:          { input: { plank: 2, stone: 2 },     output: { sword: 1 },    equip: 'weapon', needsTable: true },
+  shield:         { input: { plank: 2, stone: 1 },     output: { shield: 1 },   equip: 'shield', needsTable: true },
+  axe:            { input: { plank: 1, stone: 2 },     output: { axe: 1 },      equip: 'tool', needsTable: true },
   string:         { input: { grass: 3 },                output: { string: 1 } },
-  fishing_rod:    { input: { plank: 2, string: 1 },    output: { fishing_rod: 1 }, equip: 'tool' },
+  fishing_rod:    { input: { plank: 2, string: 1 },    output: { fishing_rod: 1 }, equip: 'tool', needsTable: true },
   bread:          { input: { wheat: 2 },                output: { bread: 1 } },
   stone_block:    { input: { stone: 2 },                output: { stone_block: 1 } },
 };
@@ -63,6 +63,15 @@ export function handleCraft(db, agent, params, tick) {
   const recipeName = params?.recipe;
   const recipe = RECIPES[recipeName];
   if (!recipe) return { ok: false, error: 'unknown_recipe', message: `Unknown recipe: ${recipeName}` };
+
+  if (recipe.needsTable) {
+    const table = db.prepare(
+      "SELECT id FROM structures WHERE type = 'crafting_table' AND ABS(x - ?) + ABS(y - ?) <= 1"
+    ).get(agent.x, agent.y);
+    if (!table) {
+      return { ok: false, error: 'need_crafting_table', message: `${recipeName} requires a crafting_table nearby` };
+    }
+  }
 
   if (!hasItems(db, agent.id, recipe.input)) {
     return { ok: false, error: 'missing_materials', message: `Missing materials for ${recipeName}` };
@@ -168,11 +177,8 @@ export function handleTradeRespond(db, agent, params, tick) {
     }
 
     if (!accept) {
-      const rejectTrade = db.transaction(() => {
-        returnEscrow(db, trade);
-        db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
-      });
-      rejectTrade();
+      returnEscrow(db, trade);
+      db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
       return { ok: true, tick, result: { rejected: true } };
     }
 
@@ -193,11 +199,8 @@ export function handleTradeRespond(db, agent, params, tick) {
       !db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, item)
     ).length;
     if (currentSlots + newSlots > 20) {
-      const rejectFull = db.transaction(() => {
-        returnEscrow(db, trade);
-        db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
-      });
-      rejectFull();
+      returnEscrow(db, trade);
+      db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
       return { ok: false, error: 'inventory_full', message: 'Not enough inventory space to receive traded items' };
     }
 
@@ -207,21 +210,16 @@ export function handleTradeRespond(db, agent, params, tick) {
       !db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(trade.from_id, item)
     ).length;
     if (proposerSlots + proposerNewSlots > 20) {
-      const rejectProposer = db.transaction(() => {
-        returnEscrow(db, trade);
-        db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
-      });
-      rejectProposer();
+      returnEscrow(db, trade);
+      db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
       return { ok: false, error: 'proposer_inventory_full', message: 'Proposer does not have enough inventory space' };
     }
 
-    const acceptTrade = db.transaction(() => {
-      removeItems(db, agent.id, requestMap);
-      addItems(db, trade.from_id, requestMap);
-      addItems(db, agent.id, offerMap);
-      db.prepare("UPDATE trades SET status = 'accepted' WHERE id = ?").run(tradeId);
-    });
-    acceptTrade();
+    // Execute the trade — all within outer transaction
+    removeItems(db, agent.id, requestMap);
+    addItems(db, trade.from_id, requestMap);
+    addItems(db, agent.id, offerMap);
+    db.prepare("UPDATE trades SET status = 'accepted' WHERE id = ?").run(tradeId);
     return { ok: true, tick, result: { accepted: true } };
   });
 

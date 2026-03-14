@@ -157,6 +157,10 @@ describe('Bug fixes', () => {
       db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, 'stone', 10)").run(a.id);
       db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, 'grass', 10)").run(a.id);
 
+      // Place crafting_table adjacent to agent (required for advanced recipes)
+      const agent = getAgent(db, a.id);
+      db.prepare("INSERT INTO structures (id, x, y, type, owner_id) VALUES ('ct1', ?, ?, 'crafting_table', ?)").run(agent.x + 1, agent.y, a.id);
+
       // Craft axe first (plank:1 + stone:2 = axe, equip: tool)
       const axeResult = handleCraft(db, getAgent(db, a.id), { recipe: 'axe' }, 1);
       expect(axeResult.ok).toBe(true);

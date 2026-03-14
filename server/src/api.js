@@ -75,6 +75,38 @@ export function createApiRouter(db) {
     res.status(status).json(result);
   });
 
+  // Inbox — notifications since last look (attacks, trades, whispers)
+  router.get('/inbox', auth, (req, res) => {
+    const agent = getAgent(db, req.agent.id);
+    if (!agent) return res.status(404).json({ ok: false, error: 'agent_not_found' });
+
+    const since = parseInt(req.query.since) || Math.max(0, currentTick - 20);
+    // Get events relevant to this agent
+    const events = db.prepare(`
+      SELECT tick, type, agent_id, data FROM events
+      WHERE tick > ? AND tick <= ?
+      AND (
+        (type IN ('attack', 'steal_attempt_detected') AND data LIKE ?)
+        OR (type = 'whisper' AND data LIKE ?)
+        OR (type = 'death' AND agent_id = ?)
+      )
+      ORDER BY tick DESC LIMIT 50
+    `).all(
+      since, currentTick,
+      `%${req.agent.id}%`, `%${req.agent.id}%`,
+      req.agent.id
+    );
+
+    const inbox = events.map(e => ({
+      tick: e.tick,
+      type: e.type,
+      from: e.agent_id,
+      data: JSON.parse(e.data || '{}'),
+    }));
+
+    res.json({ ok: true, inbox, since, tick: currentTick });
+  });
+
   router.get('/status', auth, (req, res) => {
     const agent = getAgent(db, req.agent.id);
     if (!agent) return res.status(404).json({ ok: false, error: 'agent_not_found' });

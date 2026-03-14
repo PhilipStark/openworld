@@ -2,6 +2,11 @@ import { getAwakeAgents, getAgent } from './agent.js';
 import { getWorldSize } from './world.js';
 import { getPublicChatSince } from './chat.js';
 
+// Previous state for delta computation
+let prevAgentState = new Map();
+let prevStructures = [];
+let prevStructureHash = '';
+
 export function setupWebSocket(io, db) {
   let viewerCount = 0;
 
@@ -9,9 +14,19 @@ export function setupWebSocket(io, db) {
     viewerCount++;
     io.emit('viewers', viewerCount);
 
-    const tiles = db.prepare("SELECT x, y, type FROM tiles").all();
+    // Send tiles with resource info for depleted visuals
+    const tiles = db.prepare("SELECT x, y, type, resource, resource_qty FROM tiles").all();
     const { width, height } = getWorldSize(db);
     socket.emit('tiles', { tiles, width, height });
+
+    // Send full initial state so new viewer catches up
+    const agents = db.prepare(
+      "SELECT id, name, x, y, hp, energy, status, bio, weapon, shield, tool, busy_action, busy_ticks_remaining FROM agents WHERE status != 'dead'"
+    ).all();
+    const structures = db.prepare(
+      "SELECT x, y, type, owner_id, text FROM structures"
+    ).all();
+    socket.emit('world_full', { agents, structures, world: { width, height } });
 
     socket.on('disconnect', () => {
       viewerCount--;
@@ -35,26 +50,56 @@ export function broadcastTick(io, db, tick) {
     "SELECT id, name, x, y, hp, energy, status, bio, weapon, shield, tool, busy_action, busy_ticks_remaining FROM agents WHERE status != 'dead'"
   ).all();
 
-  // Batch load all inventories in a single query instead of N+1
-  const allItems = db.prepare("SELECT agent_id, item, qty FROM items").all();
-  const inventoryMap = {};
-  for (const row of allItems) {
-    if (!inventoryMap[row.agent_id]) inventoryMap[row.agent_id] = [];
-    inventoryMap[row.agent_id].push({ item: row.item, qty: row.qty });
-  }
-  for (const agent of agents) {
-    agent.inventory = inventoryMap[agent.id] || [];
-  }
-
   const { width, height } = getWorldSize(db);
 
-  const events = db.prepare(
-    "SELECT * FROM events WHERE tick = ? ORDER BY id ASC"
-  ).all(tick);
+  // Compute agent deltas
+  const agentDeltas = [];
+  const currentAgentIds = new Set();
+  for (const agent of agents) {
+    currentAgentIds.add(agent.id);
+    const prev = prevAgentState.get(agent.id);
+    if (!prev) {
+      // New agent — send full
+      agentDeltas.push(agent);
+    } else {
+      // Only send if something changed
+      const changed = {};
+      let hasChange = false;
+      for (const key of ['x', 'y', 'hp', 'energy', 'status', 'weapon', 'shield', 'tool', 'busy_action', 'busy_ticks_remaining', 'bio', 'name']) {
+        if (agent[key] !== prev[key]) {
+          changed[key] = agent[key];
+          hasChange = true;
+        }
+      }
+      if (hasChange) {
+        changed.id = agent.id;
+        agentDeltas.push(changed);
+      }
+    }
+    prevAgentState.set(agent.id, { ...agent });
+  }
 
+  // Detect removed agents (died/disconnected)
+  const removedAgents = [];
+  for (const [id] of prevAgentState) {
+    if (!currentAgentIds.has(id)) {
+      removedAgents.push(id);
+      prevAgentState.delete(id);
+    }
+  }
+
+  // Structures delta — only send if changed (structures change rarely)
   const structures = db.prepare(
     "SELECT x, y, type, owner_id, text FROM structures"
   ).all();
+  const structHash = JSON.stringify(structures);
+  const structuresChanged = structHash !== prevStructureHash;
+  prevStructureHash = structHash;
+
+  // Events for this tick (thinking/action)
+  const events = db.prepare(
+    "SELECT * FROM events WHERE tick = ? ORDER BY id ASC"
+  ).all(tick);
 
   const thinkingMap = {};
   const actionMap = {};
@@ -66,22 +111,38 @@ export function broadcastTick(io, db, tick) {
     }
   }
 
-  io.emit('world', {
-    tick,
-    agents: agents.map(a => ({
-      ...a,
-      thinking: thinkingMap[a.id] || null,
-      last_action: actionMap[a.id] || null,
-    })),
-    world: { width, height },
-    structures,
-  });
+  // Add thinking/action to deltas
+  for (const delta of agentDeltas) {
+    if (thinkingMap[delta.id]) delta.thinking = thinkingMap[delta.id];
+    if (actionMap[delta.id]) delta.last_action = actionMap[delta.id];
+  }
 
+  // Also add thinking for agents that didn't change position but did think
+  for (const agentId of Object.keys(thinkingMap)) {
+    if (!agentDeltas.find(d => d.id === agentId)) {
+      agentDeltas.push({
+        id: agentId,
+        thinking: thinkingMap[agentId],
+        last_action: actionMap[agentId],
+      });
+    }
+  }
+
+  // Send compact delta
+  const payload = { tick, world: { width, height } };
+  if (agentDeltas.length > 0) payload.agents = agentDeltas;
+  if (removedAgents.length > 0) payload.removed = removedAgents;
+  if (structuresChanged) payload.structures = structures;
+
+  io.emit('tick', payload);
+
+  // Chat
   const chat = getPublicChatSince(db, tick - 1);
   if (chat.length > 0) {
     io.emit('chat', chat);
   }
 
+  // Agent-specific updates for followers
   for (const agent of agents) {
     if (thinkingMap[agent.id] || actionMap[agent.id]) {
       io.to(`agent:${agent.id}`).emit('agent_update', {

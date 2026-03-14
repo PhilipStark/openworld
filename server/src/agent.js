@@ -1,5 +1,7 @@
 import { v4 as uuid } from 'uuid';
 
+const DAY_LENGTH = 2400;
+
 export function registerAgent(db, name) {
   const id = uuid().slice(0, 8);
   const token = uuid();
@@ -18,9 +20,30 @@ export function connectAgent(db, id) {
   const agent = getAgent(db, id);
   if (!agent) throw new Error('Agent not found');
 
-  const tile = db.prepare(
-    "SELECT x, y FROM tiles WHERE type NOT IN ('water', 'mountain') ORDER BY RANDOM() LIMIT 1"
-  ).get();
+  // Spawn away from other agents to reduce clustering
+  // Pick 5 random passable tiles and choose the one farthest from all agents
+  const candidates = db.prepare(
+    "SELECT x, y FROM tiles WHERE type NOT IN ('water', 'mountain') ORDER BY RANDOM() LIMIT 5"
+  ).all();
+  const otherAgents = db.prepare(
+    "SELECT x, y FROM agents WHERE status IN ('awake', 'exhausted') AND id != ?"
+  ).all(id);
+
+  let tile = candidates[0];
+  if (otherAgents.length > 0 && candidates.length > 1) {
+    let bestDist = -1;
+    for (const c of candidates) {
+      let minDist = Infinity;
+      for (const a of otherAgents) {
+        const d = Math.abs(c.x - a.x) + Math.abs(c.y - a.y);
+        if (d < minDist) minDist = d;
+      }
+      if (minDist > bestDist) {
+        bestDist = minDist;
+        tile = c;
+      }
+    }
+  }
 
   if (!tile) throw new Error('No passable tile found');
 
@@ -85,10 +108,15 @@ export function buildPerception(db, agentId, radius, tick) {
   const dayProgress = (tick % dayLength) / dayLength;
   const phase = dayProgress < 0.25 ? 'morning' : dayProgress < 0.5 ? 'afternoon' : dayProgress < 0.75 ? 'evening' : 'night';
 
+  // Hunger: ticks until next auto-eat (day boundary)
+  const ticksUntilHunger = DAY_LENGTH - (tick % DAY_LENGTH);
+  const hasFood = inventory.some(i => ['berries', 'fish', 'bread'].includes(i.item));
+
   return {
     position: { x: agent.x, y: agent.y },
     hp: agent.hp,
     energy: agent.energy,
+    hunger: { ticks_until_eat: ticksUntilHunger, has_food: hasFood },
     inventory,
     equipment: { weapon: agent.weapon, shield: agent.shield, tool: agent.tool },
     busy: agent.busy_action ? { action: agent.busy_action, ticks_remaining: agent.busy_ticks_remaining } : null,
