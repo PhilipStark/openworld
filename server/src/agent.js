@@ -93,7 +93,7 @@ export function buildPerception(db, agentId, radius, tick) {
     equipment: { weapon: agent.weapon, shield: agent.shield, tool: agent.tool },
     busy: agent.busy_action ? { action: agent.busy_action, ticks_remaining: agent.busy_ticks_remaining } : null,
     nearby_agents: nearbyAgents.map(a => ({ id: a.id, name: a.name, x: a.x, y: a.y, status: a.status, hp: a.hp })),
-    nearby_resources: nearbyResources.map(r => ({ tile: [r.x, r.y], type: r.resource })),
+    nearby_resources: nearbyResources.map(r => ({ tile: [r.x, r.y], type: r.resource, qty: r.resource_qty })),
     nearby_structures: nearbyStructures.map(s => ({ tile: [s.x, s.y], type: s.type, text: s.text, owner: s.owner_id })),
     messages: [],
     pending_trades: [],

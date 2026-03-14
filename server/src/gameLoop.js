@@ -48,9 +48,14 @@ export function processTick(db, tick) {
   // 5. Expire trades
   expireTrades(db, tick);
 
-  // 6. Resource respawn (every 10 day/night cycles)
-  if (tick % (DAY_LENGTH * 10) === 0 && tick > 0) {
+  // 6. Resource respawn — per-tile cooldown (every 200 ticks = 5 min)
+  if (tick % 200 === 0 && tick > 0) {
     respawnResources(db);
+  }
+
+  // 6b. Prune old events (every 1000 ticks)
+  if (tick % 1000 === 0 && tick > 0) {
+    db.prepare("DELETE FROM events WHERE tick < ?").run(tick - 5000);
   }
 
   // 7. World expansion check
@@ -97,7 +102,7 @@ function completeBusyAction(db, agent, tick) {
           db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, ?, 1)").run(agent.id, res);
         }
       }
-      db.prepare("UPDATE tiles SET resource_qty = resource_qty - 1 WHERE x = ? AND y = ?").run(tileX, tileY);
+      db.prepare("UPDATE tiles SET resource_qty = MAX(0, resource_qty - 1) WHERE x = ? AND y = ?").run(tileX, tileY);
     }
   }
 
@@ -199,22 +204,39 @@ function autoEat(db, agent, tick) {
 }
 
 function respawnResources(db) {
+  // Respawn depleted tiles by +1 per cycle, up to max
   db.prepare(`
-    UPDATE tiles SET resource_qty = CASE
+    UPDATE tiles SET resource_qty = MIN(resource_qty + 1, CASE
       WHEN type = 'forest' AND resource = 'wood' THEN 3
       WHEN type = 'forest' AND resource = 'berries' THEN 2
       WHEN type = 'rock' THEN 3
       WHEN type = 'fertile_soil' THEN 2
       WHEN type = 'water' THEN 2
       WHEN type = 'mountain' THEN 5
-      ELSE resource_qty
+      WHEN type = 'grass' AND resource = 'grass' THEN 3
+      ELSE 1
+    END)
+    WHERE resource IS NOT NULL AND resource_qty < CASE
+      WHEN type = 'forest' AND resource = 'wood' THEN 3
+      WHEN type = 'forest' AND resource = 'berries' THEN 2
+      WHEN type = 'rock' THEN 3
+      WHEN type = 'fertile_soil' THEN 2
+      WHEN type = 'water' THEN 2
+      WHEN type = 'mountain' THEN 5
+      WHEN type = 'grass' AND resource = 'grass' THEN 3
+      ELSE 1
     END
-    WHERE resource IS NOT NULL AND resource_qty <= 0
   `).run();
 }
 
+export function getLastTick(db) {
+  const row = db.prepare("SELECT MAX(tick) as maxTick FROM events").get();
+  return row?.maxTick || 0;
+}
+
 export function startGameLoop(db, io, { setTickFn, broadcastTickFn }, tickInterval = 1500) {
-  let tick = 0;
+  let tick = getLastTick(db);
+  console.log(`Resuming from tick ${tick}`);
   return setInterval(() => {
     tick++;
     if (setTickFn) setTickFn(tick);

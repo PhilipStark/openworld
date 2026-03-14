@@ -168,8 +168,11 @@ export function handleTradeRespond(db, agent, params, tick) {
     }
 
     if (!accept) {
-      returnEscrow(db, trade);
-      db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
+      const rejectTrade = db.transaction(() => {
+        returnEscrow(db, trade);
+        db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
+      });
+      rejectTrade();
       return { ok: true, tick, result: { rejected: true } };
     }
 
@@ -190,9 +193,11 @@ export function handleTradeRespond(db, agent, params, tick) {
       !db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, item)
     ).length;
     if (currentSlots + newSlots > 20) {
-      // Return escrow and reject — receiver inventory would overflow
-      returnEscrow(db, trade);
-      db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
+      const rejectFull = db.transaction(() => {
+        returnEscrow(db, trade);
+        db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
+      });
+      rejectFull();
       return { ok: false, error: 'inventory_full', message: 'Not enough inventory space to receive traded items' };
     }
 
@@ -202,16 +207,21 @@ export function handleTradeRespond(db, agent, params, tick) {
       !db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(trade.from_id, item)
     ).length;
     if (proposerSlots + proposerNewSlots > 20) {
-      returnEscrow(db, trade);
-      db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
+      const rejectProposer = db.transaction(() => {
+        returnEscrow(db, trade);
+        db.prepare("UPDATE trades SET status = 'rejected' WHERE id = ?").run(tradeId);
+      });
+      rejectProposer();
       return { ok: false, error: 'proposer_inventory_full', message: 'Proposer does not have enough inventory space' };
     }
 
-    removeItems(db, agent.id, requestMap);
-    addItems(db, trade.from_id, requestMap);
-    addItems(db, agent.id, offerMap);
-
-    db.prepare("UPDATE trades SET status = 'accepted' WHERE id = ?").run(tradeId);
+    const acceptTrade = db.transaction(() => {
+      removeItems(db, agent.id, requestMap);
+      addItems(db, trade.from_id, requestMap);
+      addItems(db, agent.id, offerMap);
+      db.prepare("UPDATE trades SET status = 'accepted' WHERE id = ?").run(tradeId);
+    });
+    acceptTrade();
     return { ok: true, tick, result: { accepted: true } };
   });
 
@@ -227,10 +237,18 @@ function returnEscrow(db, trade) {
 
 export function expireTrades(db, tick) {
   const expired = db.prepare("SELECT * FROM trades WHERE status = 'pending' AND expires_tick <= ?").all(tick);
-  for (const trade of expired) {
-    returnEscrow(db, trade);
-    db.prepare("UPDATE trades SET status = 'expired' WHERE id = ?").run(trade.id);
-  }
+  if (expired.length === 0) return;
+  const expireAll = db.transaction(() => {
+    for (const trade of expired) {
+      // Re-check status inside transaction to prevent double-return race
+      const current = db.prepare("SELECT status FROM trades WHERE id = ?").get(trade.id);
+      if (current && current.status === 'pending') {
+        returnEscrow(db, trade);
+        db.prepare("UPDATE trades SET status = 'expired' WHERE id = ?").run(trade.id);
+      }
+    }
+  });
+  expireAll();
 }
 
 export function getTradesForAgent(db, agentId) {
@@ -272,15 +290,16 @@ export function handleBuild(db, agent, params, tick) {
   const existing = db.prepare("SELECT id FROM structures WHERE x = ? AND y = ?").get(targetX, targetY);
   if (existing) return { ok: false, error: 'tile_occupied', message: 'Structure already exists on this tile' };
 
-  removeItems(db, agent.id, cost);
-
   const ticks = BUILD_TICKS_MAP[structure] || 5;
   const busyData = JSON.stringify({ structure, x: targetX, y: targetY });
-  db.prepare("UPDATE agents SET busy_action = 'build', busy_ticks_remaining = ?, busy_data = ? WHERE id = ?").run(ticks, busyData, agent.id);
-
-  db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'build_start', ?, ?)").run(
-    tick, agent.id, busyData
-  );
+  const startBuild = db.transaction(() => {
+    removeItems(db, agent.id, cost);
+    db.prepare("UPDATE agents SET busy_action = 'build', busy_ticks_remaining = ?, busy_data = ? WHERE id = ?").run(ticks, busyData, agent.id);
+    db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'build_start', ?, ?)").run(
+      tick, agent.id, busyData
+    );
+  });
+  startBuild();
 
   return { ok: true, tick, result: { building: structure, ticks: BUILD_TICKS_MAP[structure], at: { x: targetX, y: targetY } } };
 }

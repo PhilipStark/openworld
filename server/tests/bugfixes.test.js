@@ -264,7 +264,7 @@ describe('Bug fixes', () => {
 
   // Bug 7: busy_data column for reliable action completion
   describe('busy_data reliable action completion', () => {
-    it('gather stores busy_data on agent', () => {
+    it('gather stores busy_data on agent', async () => {
       const a = registerAgent(db, 'Gatherer');
       connectAgent(db, a.id);
 

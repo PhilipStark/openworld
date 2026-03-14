@@ -58,7 +58,9 @@ export function expandWorld(db, amount) {
   const { width, height } = getWorldSize(db);
   const newWidth = width + amount;
   const newHeight = height + amount;
-  const noise2D = createNoise2D();
+  // Use deterministic seed based on world size so expansion is continuous
+  const seedValue = width * 10000 + height;
+  const noise2D = createNoise2D(() => seedValue / 100000);
 
   const insert = db.prepare(
     'INSERT OR IGNORE INTO tiles (x, y, type, resource, resource_qty) VALUES (?, ?, ?, ?, ?)'

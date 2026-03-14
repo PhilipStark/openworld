@@ -49,6 +49,10 @@ setInterval(() => {
   for (const [ip, entry] of ipRateLimitMap) {
     if (now - entry.start > 300000) ipRateLimitMap.delete(ip);
   }
+  // Also clean agent rate limit entries older than 30s
+  for (const [agentId, timestamp] of rateLimitMap) {
+    if (now - timestamp > 30000) rateLimitMap.delete(agentId);
+  }
 }, 300000);
 
 export function rateLimiter(tickInterval = 1500) {

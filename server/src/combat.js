@@ -40,6 +40,7 @@ export function handleSteal(db, agent, params, tick) {
 
   const target = db.prepare("SELECT * FROM agents WHERE id = ? OR name = ?").get(targetId, targetId);
   if (!target) return { ok: false, error: 'target_not_found', message: 'Target not found' };
+  if (target.status === 'dead') return { ok: false, error: 'target_dead', message: 'Cannot steal from dead agent (use loot)' };
 
   const dist = Math.abs(agent.x - target.x) + Math.abs(agent.y - target.y);
   if (dist > 1) return { ok: false, error: 'not_adjacent', message: 'Must be adjacent to steal' };
@@ -110,16 +111,13 @@ export function handleLoot(db, agent, params, tick) {
     for (const item of items) {
       const existing = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = ?").get(agent.id, item.item);
       if (existing) {
-        // Existing slot — just add quantity
         db.prepare("UPDATE items SET qty = qty + ? WHERE agent_id = ? AND item = ?").run(item.qty, agent.id, item.item);
         looted.push(item);
       } else if (usedSlots < MAX_SLOTS) {
-        // New slot — check capacity
         db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, ?, ?)").run(agent.id, item.item, item.qty);
         usedSlots++;
         looted.push(item);
       }
-      // else: skip item, inventory full for new slots
     }
     db.prepare("DELETE FROM items WHERE agent_id = ?").run(target.id);
     return looted;

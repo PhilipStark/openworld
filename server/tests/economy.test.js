@@ -27,9 +27,9 @@ describe('economy', () => {
     expect(result.ok).toBe(true);
     const inv = getInventory(db, agentId);
     const wood = inv.find(i => i.item === 'wood');
-    const planks = inv.find(i => i.item === 'planks');
+    const plank = inv.find(i => i.item === 'plank');
     expect(wood.qty).toBe(2);
-    expect(planks.qty).toBe(2);
+    expect(plank.qty).toBe(2);
   });
 
   it('craft fails without materials', () => {

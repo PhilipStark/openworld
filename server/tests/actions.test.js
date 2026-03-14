@@ -42,8 +42,10 @@ describe('actions', () => {
   });
 
   it('move costs 1 energy', () => {
+    db.prepare("UPDATE tiles SET type = 'grass' WHERE x = 5 AND y = 4").run();
     const before = getAgent(db, agentId).energy;
-    dispatch(db, agentId, { action: 'move', params: { direction: 'north' }, thinking: 'test' }, 1);
+    const result = dispatch(db, agentId, { action: 'move', params: { direction: 'north' }, thinking: 'test' }, 1);
+    expect(result.ok).toBe(true);
     const after = getAgent(db, agentId).energy;
     expect(after).toBe(before - 1);
   });

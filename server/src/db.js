@@ -81,6 +81,8 @@ export function createDb(path = './openworld.db') {
     CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
     CREATE INDEX IF NOT EXISTS idx_trades_status_expires ON trades(status, expires_tick);
     CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
+    CREATE INDEX IF NOT EXISTS idx_tiles_resource ON tiles(x, y, resource_qty) WHERE resource IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_agents_name ON agents(name);
   `);
 
   // Migration: add busy_data column for reliable action completion

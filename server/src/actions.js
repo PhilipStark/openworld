@@ -45,37 +45,46 @@ export function dispatch(db, agentId, actionData, tick) {
     return { ok: false, error: 'not_enough_energy', message: `Need ${energyCost} energy, have ${agent.energy}` };
   }
 
-  if (energyCost > 0) {
-    db.prepare("UPDATE agents SET energy = MAX(0, energy - ?) WHERE id = ?").run(energyCost, agentId);
-  }
-
   if (actionData.thinking) {
     db.prepare("INSERT INTO events (tick, type, agent_id, data) VALUES (?, 'thinking', ?, ?)").run(
       tick, agentId, JSON.stringify({ thinking: actionData.thinking, action: actionData.action })
     );
   }
 
+  // Deduct energy AFTER action succeeds (passed as callback)
+  const deductEnergy = () => {
+    if (energyCost > 0) {
+      db.prepare("UPDATE agents SET energy = MAX(0, energy - ?) WHERE id = ?").run(energyCost, agentId);
+    }
+  };
+
+  let result;
   switch (actionData.action) {
-    case 'move': return handleMove(db, agent, actionData.params, tick);
-    case 'look': return handleLook(db, agent, tick);
-    case 'rest': return handleRest(db, agent, tick);
-    case 'set_bio': return handleSetBio(db, agent, actionData.params, tick);
-    case 'gather': return handleGather(db, agent, actionData.params, tick);
-    case 'speak': return handleSpeak(db, agent, actionData.params, tick);
-    case 'whisper': return handleWhisper(db, agent, actionData.params, tick);
-    case 'attack': return combatHandlers.handleAttack(db, agent, actionData.params, tick);
-    case 'steal': return combatHandlers.handleSteal(db, agent, actionData.params, tick);
-    case 'loot': return combatHandlers.handleLoot(db, agent, actionData.params, tick);
-    case 'craft': return economyHandlers.handleCraft(db, agent, actionData.params, tick);
-    case 'give': return economyHandlers.handleGive(db, agent, actionData.params, tick);
-    case 'trade_propose': return economyHandlers.handleTradePropose(db, agent, actionData.params, tick);
-    case 'trade_respond': return economyHandlers.handleTradeRespond(db, agent, actionData.params, tick);
-    case 'build': return economyHandlers.handleBuild(db, agent, actionData.params, tick);
-    case 'place_sign': return economyHandlers.handlePlaceSign(db, agent, actionData.params, tick);
-    case 'destroy': return economyHandlers.handleDestroy(db, agent, actionData.params, tick);
+    case 'move': result = handleMove(db, agent, actionData.params, tick); break;
+    case 'look': result = handleLook(db, agent, tick); break;
+    case 'rest': result = handleRest(db, agent, tick); break;
+    case 'set_bio': result = handleSetBio(db, agent, actionData.params, tick); break;
+    case 'gather': result = handleGather(db, agent, actionData.params, tick); break;
+    case 'speak': result = handleSpeak(db, agent, actionData.params, tick); break;
+    case 'whisper': result = handleWhisper(db, agent, actionData.params, tick); break;
+    case 'attack': result = combatHandlers.handleAttack(db, agent, actionData.params, tick); break;
+    case 'steal': result = combatHandlers.handleSteal(db, agent, actionData.params, tick); break;
+    case 'loot': result = combatHandlers.handleLoot(db, agent, actionData.params, tick); break;
+    case 'craft': result = economyHandlers.handleCraft(db, agent, actionData.params, tick); break;
+    case 'give': result = economyHandlers.handleGive(db, agent, actionData.params, tick); break;
+    case 'trade_propose': result = economyHandlers.handleTradePropose(db, agent, actionData.params, tick); break;
+    case 'trade_respond': result = economyHandlers.handleTradeRespond(db, agent, actionData.params, tick); break;
+    case 'build': result = economyHandlers.handleBuild(db, agent, actionData.params, tick); break;
+    case 'place_sign': result = economyHandlers.handlePlaceSign(db, agent, actionData.params, tick); break;
+    case 'destroy': result = economyHandlers.handleDestroy(db, agent, actionData.params, tick); break;
     default:
       return { ok: false, error: 'unknown_action', message: `Unknown action: ${actionData.action}` };
   }
+
+  // Only deduct energy if action succeeded
+  if (result.ok) deductEnergy();
+
+  return result;
 }
 
 function handleMove(db, agent, params, tick) {
@@ -125,35 +134,48 @@ function handleSetBio(db, agent, params, tick) {
 }
 
 function handleGather(db, agent, params, tick) {
-  // Support optional direction parameter to gather from adjacent tile
   const direction = params?.direction;
-  let targetX = agent.x, targetY = agent.y;
+  let tileX = agent.x, tileY = agent.y;
 
+  // If direction given, target the adjacent tile
   if (direction) {
     const offset = DIRECTION_OFFSETS[direction];
     if (!offset) return { ok: false, error: 'invalid_direction', message: 'Direction must be north/south/east/west' };
-    targetX = agent.x + offset.dx;
-    targetY = agent.y + offset.dy;
+    tileX = agent.x + offset.dx;
+    tileY = agent.y + offset.dy;
   }
 
-  let tile = getTile(db, targetX, targetY);
+  let tile = getTile(db, tileX, tileY);
 
-  if (tile && (tile.type === 'water' || (!tile.resource || tile.resource_qty <= 0))) {
-    const adjacentWater = db.prepare(
-      "SELECT x, y, type, resource, resource_qty FROM tiles WHERE type = 'water' AND resource = 'fish' AND resource_qty > 0 AND ABS(x - ?) + ABS(y - ?) = 1 LIMIT 1"
-    ).get(targetX, targetY);
-
-    if (adjacentWater) {
-      const rod = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = 'fishing_rod'").get(agent.id);
-      if (!rod) return { ok: false, error: 'need_fishing_rod', message: 'Need fishing rod to fish' };
-      tile = adjacentWater;
-    } else if (!tile.resource || tile.resource_qty <= 0) {
-      return { ok: false, error: 'no_resource', message: 'No resource on this tile' };
+  // Fishing: if target tile is water, check for fishing rod
+  if (tile && tile.type === 'water') {
+    if (!tile.resource || tile.resource_qty <= 0) {
+      return { ok: false, error: 'no_resource', message: 'No fish on this water tile' };
+    }
+    const rod = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = 'fishing_rod'").get(agent.id);
+    if (!rod) return { ok: false, error: 'need_fishing_rod', message: 'Need fishing rod to fish' };
+  } else if (!tile || !tile.resource || tile.resource_qty <= 0) {
+    // No resource on target — if no direction was given, try adjacent water as fallback
+    if (!direction) {
+      const adjacentWater = db.prepare(
+        "SELECT x, y, type, resource, resource_qty FROM tiles WHERE type = 'water' AND resource = 'fish' AND resource_qty > 0 AND ABS(x - ?) + ABS(y - ?) = 1 LIMIT 1"
+      ).get(agent.x, agent.y);
+      if (adjacentWater) {
+        const rod = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = 'fishing_rod'").get(agent.id);
+        if (!rod) return { ok: false, error: 'need_fishing_rod', message: 'Need fishing rod to fish' };
+        tile = adjacentWater;
+        tileX = adjacentWater.x;
+        tileY = adjacentWater.y;
+      } else {
+        return { ok: false, error: 'no_resource', message: 'No resource here. Use direction to gather from adjacent tile.' };
+      }
+    } else {
+      return { ok: false, error: 'no_resource', message: 'No resource on target tile' };
     }
   }
 
   if (!tile || !tile.resource || tile.resource_qty <= 0) {
-    return { ok: false, error: 'no_resource', message: 'No resource on this tile' };
+    return { ok: false, error: 'no_resource', message: 'No resource on target tile' };
   }
 
   const invCount = db.prepare("SELECT COUNT(*) as cnt FROM items WHERE agent_id = ?").get(agent.id).cnt;
