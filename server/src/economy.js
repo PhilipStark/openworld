@@ -2,12 +2,12 @@ import { v4 as uuid } from 'uuid';
 import { getAgent, getInventory } from './agent.js';
 
 const RECIPES = {
-  plank:          { input: { wood: 1 },                output: { planks: 2 } },
-  sword:          { input: { wood: 1, stone: 2 },      output: { sword: 1 },    equip: 'weapon' },
-  shield:         { input: { wood: 2, stone: 1 },      output: { shield: 1 },   equip: 'shield' },
-  axe:            { input: { wood: 2, stone: 1 },      output: { axe: 1 },      equip: 'tool' },
+  plank:          { input: { wood: 1 },                output: { plank: 2 } },
+  sword:          { input: { plank: 2, stone: 2 },     output: { sword: 1 },    equip: 'weapon' },
+  shield:         { input: { plank: 2, stone: 1 },     output: { shield: 1 },   equip: 'shield' },
+  axe:            { input: { plank: 1, stone: 2 },     output: { axe: 1 },      equip: 'tool' },
   string:         { input: { grass: 3 },                output: { string: 1 } },
-  fishing_rod:    { input: { wood: 2, string: 1 },     output: { fishing_rod: 1 }, equip: 'tool' },
+  fishing_rod:    { input: { plank: 2, string: 1 },    output: { fishing_rod: 1 }, equip: 'tool' },
   bread:          { input: { wheat: 2 },                output: { bread: 1 } },
   stone_block:    { input: { stone: 2 },                output: { stone_block: 1 } },
 };
@@ -18,7 +18,7 @@ const BUILD_COSTS = {
   crafting_table: { wood: 3, stone: 2 },
   bridge:         { wood: 5, stone: 2 },
   wall:           { stone_block: 3 },
-  door:           { planks: 2 },
+  door:           { plank: 2 },
 };
 
 const BUILD_TICKS_MAP = {

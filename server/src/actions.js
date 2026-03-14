@@ -125,12 +125,23 @@ function handleSetBio(db, agent, params, tick) {
 }
 
 function handleGather(db, agent, params, tick) {
-  let tile = getTile(db, agent.x, agent.y);
+  // Support optional direction parameter to gather from adjacent tile
+  const direction = params?.direction;
+  let targetX = agent.x, targetY = agent.y;
+
+  if (direction) {
+    const offset = DIRECTION_OFFSETS[direction];
+    if (!offset) return { ok: false, error: 'invalid_direction', message: 'Direction must be north/south/east/west' };
+    targetX = agent.x + offset.dx;
+    targetY = agent.y + offset.dy;
+  }
+
+  let tile = getTile(db, targetX, targetY);
 
   if (tile && (tile.type === 'water' || (!tile.resource || tile.resource_qty <= 0))) {
     const adjacentWater = db.prepare(
       "SELECT x, y, type, resource, resource_qty FROM tiles WHERE type = 'water' AND resource = 'fish' AND resource_qty > 0 AND ABS(x - ?) + ABS(y - ?) = 1 LIMIT 1"
-    ).get(agent.x, agent.y);
+    ).get(targetX, targetY);
 
     if (adjacentWater) {
       const rod = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = 'fishing_rod'").get(agent.id);

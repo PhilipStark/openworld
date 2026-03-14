@@ -90,5 +90,26 @@ export function createDb(path = './openworld.db') {
     // Column already exists — ignore
   }
 
+  // Migration: rename 'planks' to 'plank' for naming consistency
+  try {
+    const planksRows = db.prepare("SELECT agent_id, qty FROM items WHERE item = 'planks'").all();
+    if (planksRows.length > 0) {
+      const migrate = db.transaction(() => {
+        for (const row of planksRows) {
+          const existing = db.prepare("SELECT qty FROM items WHERE agent_id = ? AND item = 'plank'").get(row.agent_id);
+          if (existing) {
+            db.prepare("UPDATE items SET qty = qty + ? WHERE agent_id = ? AND item = 'plank'").run(row.qty, row.agent_id);
+          } else {
+            db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, 'plank', ?)").run(row.agent_id, row.qty);
+          }
+        }
+        db.prepare("DELETE FROM items WHERE item = 'planks'").run();
+      });
+      migrate();
+    }
+  } catch (e) {
+    // Migration may fail on fresh DB — ignore
+  }
+
   return db;
 }
