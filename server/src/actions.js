@@ -3,6 +3,7 @@ import { getAgent, buildPerception } from './agent.js';
 import { getTile } from './world.js';
 import * as combatHandlers from './combat.js';
 import * as economyHandlers from './economy.js';
+import * as societyHandlers from './society.js';
 
 const DIRECTION_OFFSETS = {
   north: { dx: 0, dy: -1 },
@@ -16,6 +17,8 @@ const ENERGY_COSTS = {
   give: 0, trade_propose: 0, trade_respond: 0, place_sign: 1,
   attack: 5, steal: 3, loot: 1, destroy: 5, look: 0, rest: 0,
   set_bio: 0, cancel: 0, eat: 0, deposit: 0, withdraw: 0,
+  post_bulletin: 1, read_bulletin: 0, pay_gold: 0,
+  create_shop: 5, list_item: 0, buy_item: 0, view_shop: 0,
 };
 
 const FOOD_ITEMS = {
@@ -86,6 +89,13 @@ export function dispatch(db, agentId, actionData, tick) {
     case 'build': result = economyHandlers.handleBuild(db, agent, actionData.params, tick); break;
     case 'place_sign': result = economyHandlers.handlePlaceSign(db, agent, actionData.params, tick); break;
     case 'destroy': result = economyHandlers.handleDestroy(db, agent, actionData.params, tick); break;
+    case 'post_bulletin': result = societyHandlers.handlePostBulletin(db, agent, actionData.params, tick); break;
+    case 'read_bulletin': result = societyHandlers.handleReadBulletin(db, agent, actionData.params, tick); break;
+    case 'pay_gold': result = societyHandlers.handlePayGold(db, agent, actionData.params, tick); break;
+    case 'create_shop': result = societyHandlers.handleCreateShop(db, agent, actionData.params, tick); break;
+    case 'list_item': result = societyHandlers.handleListItem(db, agent, actionData.params, tick); break;
+    case 'buy_item': result = societyHandlers.handleBuyItem(db, agent, actionData.params, tick); break;
+    case 'view_shop': result = societyHandlers.handleViewShop(db, agent, actionData.params, tick); break;
     default:
       return { ok: false, error: 'unknown_action', message: `Unknown action: ${actionData.action}` };
   }

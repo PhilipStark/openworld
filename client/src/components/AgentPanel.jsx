@@ -39,7 +39,7 @@ export default function AgentPanel({ agent }) {
         )}
       </div>
 
-      {/* HP & Energy Bars */}
+      {/* HP & Energy Bars + Gold */}
       <div className="space-y-2">
         <StatBar
           label="HP"
@@ -57,6 +57,10 @@ export default function AgentPanel({ agent }) {
           color={energyPercent > 50 ? '#f1c40f' : energyPercent > 25 ? '#e67e22' : '#e74c3c'}
           icon="⚡"
         />
+        <div className="flex justify-between items-center text-[11px] bg-amber-500/5 rounded px-2 py-1 border border-amber-500/20">
+          <span className="text-amber-400">🪙 Gold</span>
+          <span className="text-amber-300 font-bold tabular-nums">{agent.gold ?? 0}</span>
+        </div>
       </div>
 
       {/* Equipment */}

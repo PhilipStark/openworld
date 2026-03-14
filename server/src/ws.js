@@ -21,10 +21,10 @@ export function setupWebSocket(io, db) {
 
     // Send full initial state so new viewer catches up
     const agents = db.prepare(
-      "SELECT id, name, x, y, hp, energy, status, bio, weapon, shield, tool, busy_action, busy_ticks_remaining FROM agents WHERE status != 'dead'"
+      "SELECT id, name, x, y, hp, energy, gold, status, bio, weapon, shield, tool, busy_action, busy_ticks_remaining FROM agents WHERE status != 'dead'"
     ).all();
     const structures = db.prepare(
-      "SELECT x, y, type, owner_id, text FROM structures"
+      "SELECT id, x, y, type, owner_id, text FROM structures"
     ).all();
     socket.emit('world_full', { agents, structures, world: { width, height } });
 
@@ -47,7 +47,7 @@ export function setupWebSocket(io, db) {
 
 export function broadcastTick(io, db, tick) {
   const agents = db.prepare(
-    "SELECT id, name, x, y, hp, energy, status, bio, weapon, shield, tool, busy_action, busy_ticks_remaining FROM agents WHERE status != 'dead'"
+    "SELECT id, name, x, y, hp, energy, gold, status, bio, weapon, shield, tool, busy_action, busy_ticks_remaining FROM agents WHERE status != 'dead'"
   ).all();
 
   const { width, height } = getWorldSize(db);
@@ -65,7 +65,7 @@ export function broadcastTick(io, db, tick) {
       // Only send if something changed
       const changed = {};
       let hasChange = false;
-      for (const key of ['x', 'y', 'hp', 'energy', 'status', 'weapon', 'shield', 'tool', 'busy_action', 'busy_ticks_remaining', 'bio', 'name']) {
+      for (const key of ['x', 'y', 'hp', 'energy', 'gold', 'status', 'weapon', 'shield', 'tool', 'busy_action', 'busy_ticks_remaining', 'bio', 'name']) {
         if (agent[key] !== prev[key]) {
           changed[key] = agent[key];
           hasChange = true;

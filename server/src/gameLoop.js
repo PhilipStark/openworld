@@ -1,6 +1,7 @@
 import { getAwakeAgents, getAgent, getInventory } from './agent.js';
 import { shouldExpand, expandWorld, getTile } from './world.js';
 import { expireTrades } from './economy.js';
+import { cleanupExpiredPosts } from './society.js';
 
 const DAY_LENGTH = 2400;
 
@@ -59,8 +60,9 @@ export function processTick(db, tick) {
     }
   }
 
-  // 5. Expire trades
+  // 5. Expire trades + bulletin posts
   expireTrades(db, tick);
+  cleanupExpiredPosts(db, tick);
 
   // 6. Resource respawn — per-tile cooldown (every 200 ticks = 5 min)
   if (tick % 200 === 0 && tick > 0) {

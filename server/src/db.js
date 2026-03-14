@@ -134,11 +134,44 @@ export function createDb(path = './openworld.db') {
     CREATE INDEX IF NOT EXISTS idx_agents_pos ON agents(x, y) WHERE status = 'awake';
     CREATE INDEX IF NOT EXISTS idx_structures_owner ON structures(owner_id);
     CREATE INDEX IF NOT EXISTS idx_structures_type_pos ON structures(type, x, y);
+
+    -- Bulletin board: persistent public messages at town center
+    CREATE TABLE IF NOT EXISTS bulletin_posts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT NOT NULL,
+      message TEXT NOT NULL,
+      category TEXT DEFAULT 'general',
+      created_at_tick INTEGER NOT NULL,
+      expires_at_tick INTEGER,
+      FOREIGN KEY (agent_id) REFERENCES agents(id)
+    );
+
+    -- Shops: agents list items for sale with gold prices
+    CREATE TABLE IF NOT EXISTS shop_listings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT NOT NULL,
+      structure_id TEXT NOT NULL,
+      item TEXT NOT NULL,
+      price INTEGER NOT NULL,
+      qty INTEGER NOT NULL DEFAULT 1,
+      FOREIGN KEY (agent_id) REFERENCES agents(id),
+      FOREIGN KEY (structure_id) REFERENCES structures(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bulletin_active ON bulletin_posts(expires_at_tick);
+    CREATE INDEX IF NOT EXISTS idx_shop_listings_struct ON shop_listings(structure_id);
   `);
 
   // Migration: add busy_data column for reliable action completion
   try {
     db.exec("ALTER TABLE agents ADD COLUMN busy_data TEXT");
+  } catch (e) {
+    // Column already exists — ignore
+  }
+
+  // Migration: add gold column to agents
+  try {
+    db.exec("ALTER TABLE agents ADD COLUMN gold INTEGER NOT NULL DEFAULT 50");
   } catch (e) {
     // Column already exists — ignore
   }

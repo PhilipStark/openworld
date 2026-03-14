@@ -140,6 +140,7 @@ export function buildPerception(db, agentId, radius, tick) {
     position: { x: agent.x, y: agent.y },
     hp: agent.hp,
     energy: agent.energy,
+    gold: agent.gold || 0,
     hunger: { ticks_until_eat: ticksUntilHunger, has_food: hasFood },
     inventory,
     equipment: { weapon: agent.weapon, shield: agent.shield, tool: agent.tool },

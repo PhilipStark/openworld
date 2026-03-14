@@ -505,6 +505,35 @@ function generateSign(ctx, rng) {
   ctx.fillRect(10, 12, 12, 2);
 }
 
+function generateShop(ctx, rng) {
+  // Shop building — market stall with awning
+  // Base structure
+  ctx.fillStyle = '#a08060';
+  ctx.fillRect(2, 12, 28, 18);
+  // Dark interior
+  ctx.fillStyle = '#4a3520';
+  ctx.fillRect(4, 14, 24, 14);
+  // Counter
+  ctx.fillStyle = '#c4952a';
+  ctx.fillRect(4, 22, 24, 4);
+  // Items on counter
+  ctx.fillStyle = '#e0c040';
+  ctx.fillRect(8, 20, 4, 2);
+  ctx.fillStyle = '#60a040';
+  ctx.fillRect(16, 20, 4, 2);
+  ctx.fillStyle = '#a06030';
+  ctx.fillRect(22, 20, 4, 2);
+  // Awning (red/white stripes)
+  for (let i = 0; i < 4; i++) {
+    ctx.fillStyle = i % 2 === 0 ? '#c03030' : '#e8d8c8';
+    ctx.fillRect(i * 8, 4, 8, 10);
+  }
+  // Awning border
+  ctx.fillStyle = '#8b4513';
+  ctx.fillRect(0, 4, 32, 2);
+  ctx.fillRect(0, 12, 32, 2);
+}
+
 // ─── TEXTURE CACHE & PUBLIC API ────────────────────────────────────
 
 const textureCache = new Map();
@@ -612,6 +641,7 @@ const STRUCTURE_GENERATORS = {
   wall: generateWall,
   door: generateDoor,
   sign: generateSign,
+  shop: generateShop,
 };
 
 export function getStructureTexture(type) {
