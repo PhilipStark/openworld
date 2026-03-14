@@ -152,12 +152,12 @@ describe('Bug fixes', () => {
       const a = registerAgent(db, 'Crafter');
       connectAgent(db, a.id);
 
-      // Give materials for fishing_rod: wood:2, string:1
-      db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, 'wood', 10)").run(a.id);
+      // Give materials: axe needs plank:1+stone:2, fishing_rod needs plank:2+string:1, string needs grass:3
+      db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, 'plank', 10)").run(a.id);
       db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, 'stone', 10)").run(a.id);
       db.prepare("INSERT INTO items (agent_id, item, qty) VALUES (?, 'grass', 10)").run(a.id);
 
-      // Craft axe first (wood:2 + stone:1 = axe, equip: tool)
+      // Craft axe first (plank:1 + stone:2 = axe, equip: tool)
       const axeResult = handleCraft(db, getAgent(db, a.id), { recipe: 'axe' }, 1);
       expect(axeResult.ok).toBe(true);
 
@@ -167,7 +167,7 @@ describe('Bug fixes', () => {
       // Craft string (grass:3 = string:1)
       handleCraft(db, getAgent(db, a.id), { recipe: 'string' }, 2);
 
-      // Craft fishing_rod (wood:2 + string:1 = fishing_rod, equip: tool)
+      // Craft fishing_rod (plank:2 + string:1 = fishing_rod, equip: tool)
       const rodResult = handleCraft(db, getAgent(db, a.id), { recipe: 'fishing_rod' }, 3);
       expect(rodResult.ok).toBe(true);
 
