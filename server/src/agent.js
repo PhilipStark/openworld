@@ -88,9 +88,12 @@ export function buildPerception(db, agentId, radius, tick) {
   const inventory = getInventory(db, agentId);
 
   const nearbyAgents = db.prepare(`
-    SELECT id, name, x, y, status, hp FROM agents
-    WHERE id != ? AND ABS(x - ?) + ABS(y - ?) <= ? AND status != 'dead'
-  `).all(agentId, agent.x, agent.y, radius);
+    SELECT a.id, a.name, a.x, a.y, a.status, a.hp, a.bio,
+      r.stance as relationship
+    FROM agents a
+    LEFT JOIN relationships r ON r.agent_id = ? AND r.target_id = a.id
+    WHERE a.id != ? AND ABS(a.x - ?) + ABS(a.y - ?) <= ? AND a.status != 'dead'
+  `).all(agentId, agentId, agent.x, agent.y, radius);
 
   const nearbyResources = db.prepare(`
     SELECT x, y, type, resource, resource_qty FROM tiles
@@ -102,6 +105,13 @@ export function buildPerception(db, agentId, radius, tick) {
     SELECT x, y, type, owner_id, text FROM structures
     WHERE ABS(x - ?) + ABS(y - ?) <= ?
   `).all(agent.x, agent.y, radius);
+
+  // Alliance info
+  const alliance = db.prepare(`
+    SELECT a.id, a.name, am.role FROM alliance_members am
+    JOIN alliances a ON a.id = am.alliance_id
+    WHERE am.agent_id = ?
+  `).get(agentId);
 
   const dayLength = 2400;
   const day = Math.floor(tick / dayLength) + 1;
@@ -120,7 +130,8 @@ export function buildPerception(db, agentId, radius, tick) {
     inventory,
     equipment: { weapon: agent.weapon, shield: agent.shield, tool: agent.tool },
     busy: agent.busy_action ? { action: agent.busy_action, ticks_remaining: agent.busy_ticks_remaining } : null,
-    nearby_agents: nearbyAgents.map(a => ({ id: a.id, name: a.name, x: a.x, y: a.y, status: a.status, hp: a.hp })),
+    alliance: alliance ? { id: alliance.id, name: alliance.name, role: alliance.role } : null,
+    nearby_agents: nearbyAgents.map(a => ({ id: a.id, name: a.name, x: a.x, y: a.y, status: a.status, hp: a.hp, bio: a.bio, relationship: a.relationship || null })),
     nearby_resources: nearbyResources.map(r => ({ tile: [r.x, r.y], type: r.resource, qty: r.resource_qty })),
     nearby_structures: nearbyStructures.map(s => ({ tile: [s.x, s.y], type: s.type, text: s.text, owner: s.owner_id })),
     messages: [],

@@ -83,6 +83,46 @@ export function createDb(path = './openworld.db') {
       FOREIGN KEY (structure_id) REFERENCES structures(id)
     );
 
+    CREATE TABLE IF NOT EXISTS agent_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(agent_id, key),
+      FOREIGN KEY (agent_id) REFERENCES agents(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS relationships (
+      agent_id TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      stance TEXT NOT NULL DEFAULT 'neutral',
+      note TEXT DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (agent_id, target_id),
+      FOREIGN KEY (agent_id) REFERENCES agents(id),
+      FOREIGN KEY (target_id) REFERENCES agents(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS alliances (
+      id TEXT PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL,
+      leader_id TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (leader_id) REFERENCES agents(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS alliance_members (
+      alliance_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'member',
+      joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (alliance_id, agent_id),
+      FOREIGN KEY (alliance_id) REFERENCES alliances(id),
+      FOREIGN KEY (agent_id) REFERENCES agents(id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_events_tick ON events(tick);
     CREATE INDEX IF NOT EXISTS idx_events_agent_type ON events(agent_id, type);
     CREATE INDEX IF NOT EXISTS idx_structures_pos ON structures(x, y);

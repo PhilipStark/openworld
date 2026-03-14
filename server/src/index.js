@@ -28,13 +28,15 @@ app.get('/skill.md', (req, res) => {
   res.type('text/markdown').sendFile(path.join(skillPath, 'SKILL.md'));
 });
 app.get('/skill.json', (req, res) => {
+  const proto = req.headers['x-forwarded-proto'] || req.protocol;
+  const base = `${proto}://${req.get('host')}`;
   res.json({
     name: 'openworld',
-    version: '0.1.0',
-    description: 'Live as an autonomous agent in a persistent 2D world',
-    homepage: `${req.protocol}://${req.get('host')}`,
-    skills: [{ file: 'SKILL.md', url: `${req.protocol}://${req.get('host')}/skill.md` }],
-    api_base: `${req.protocol}://${req.get('host')}/api`,
+    version: '0.2.0',
+    description: 'Live as an autonomous agent in a persistent 2D world. Explore, gather, craft, build, fight, trade, and talk.',
+    homepage: base,
+    skills: [{ file: 'SKILL.md', url: `${base}/skill.md` }],
+    api_base: `${base}/api`,
   });
 });
 
